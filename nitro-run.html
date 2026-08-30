@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>霓虹狂飙 NITRO RUN</title>
+<style>
+  body { margin:0; background:#111; display:flex; justify-content:center; align-items:center; height:100vh; font-family:-apple-system,"PingFang SC",sans-serif; }
+  canvas { border-radius:12px; box-shadow:0 0 60px rgba(0,200,255,.25); }
+</style>
+</head>
+<body>
+<canvas id="game" width="900" height="600"></canvas>
+<script>
+const cv = document.getElementById('game'), ctx = cv.getContext('2d');
+const W = cv.width, H = cv.height, HORIZON = 200, CAM_Z = 8;
+const C = (h, s, l) => `hsl(${h},${s}%,${l}%)`;
+
+const LANES = [-0.55, 0, 0.55];
+const PAINTS = [[0,72,46],[25,85,48],[215,65,42],[0,0,62],[0,0,85],[150,30,32]];
+const PLAYER_PAINT = [210,95,50];
+
+let state = 'title';
+let player, obstacles, speed, score, best, roadOffset, spawnTimer, tilt, pitch, time, fps;
+best = +(localStorage.getItem('nitro_best') || 0);
+fps = 60;
+
+// 速度线：从消失点沿行进方向冲出的"空气流"，方向随机但固定，避免闪烁
+function newStreak() {
+  const side = Math.random() < 0.5 ? -1 : 1;
+  return {
+    dx: side * (0.45 + Math.random() * 0.55),   // 只往两侧飞，不挡中间视线
+    dy: 0.12 + Math.random() * 0.5,
+    r: Math.random(),                            // 0=刚离开消失点 1=飞出屏幕
+    len: 0.5 + Math.random()
+  };
+}
+const streaks = Array.from({ length: 18 }, newStreak);
+
+function reset() {
+  player = { lane: 1, x: LANES[1], px: LANES[1], ps: 22 };
+  obstacles = [];
+  speed = 22; score = 0; roadOffset = 0; spawnTimer = 1.2; tilt = 0; pitch = 0; time = 0;
+  track = []; nextD = 0;
+}
+
+// —— 按键状态（↑↓ 需要持续检测）——
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.key] = true;
+  if (e.key === ' ') {
+    if (state !== 'play') { reset(); state = 'play'; }
+    e.preventDefault();
+    return;
+  }
+  if (state !== 'play' || e.repeat) return;
+  if (e.key === 'ArrowLeft'  || e.key === 'a' || e.key === 'A') player.lane = Math.max(0, player.lane - 1);
+  if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') player.lane = Math.min(2, player.lane + 1);
+  if (e.key.startsWith('Arrow')) e.preventDefault();
+});
+addEventListener('keyup', e => keys[e.key] = false);
+
+function spawn() {
+  const doubleChance = Math.min(0.8, 0.15 + time * 0.01);
+  const count = (Math.random() < doubleChance) ? 2 : 1;
+  const lanes = [0, 1, 2].sort(() => Math.random() - 0.5);
+  for (let i = 0; i < count; i++) {
+    const lane = lanes[i];
+    obstacles.push({
+      baseX: LANES[lane],
+      x: LANES[lane],
+      z: 230,
+      paint: PAINTS[Math.floor(Math.random() * PAINTS.length)],
+      weave: time > 40 && Math.random() < 0.35,
+      phase: Math.random() * 7
+    });
+  }
+}
+
+function update(dt) {
+  time += dt;
+  if (state !== 'play') return;
+
+  // 油门 / 刹车：松开就保持当前速度（定速巡航），不再自动回落
+  if (keys['ArrowUp'] || keys['w'] || keys['W']) {
+    speed = Math.min(205, speed + 34 * dt);        // 地板油（极速 ≈ 1230 km/h）
+  } else if (keys['ArrowDown'] || keys['s'] || keys['S']) {
+    speed = Math.max(12, speed - 45 * dt);         // 急刹
+  }
+  roadOffset += speed * dt;
+  score += speed * dt * 0.5;
+
+  const targetX = LANES[player.lane];
+  const dx = targetX - player.x;
+  player.x += Math.sign(dx) * Math.min(Math.abs(dx), 7 * dt);
+
+  // —— 物理感：变道侧倾（悬挂侧倾）+ 加速抬头 / 刹车点头 ——
+  const vx = (player.x - player.px) / dt;  player.px = player.x;
+  const acc = (speed - player.ps) / dt;    player.ps = speed;
+  const rollTarget = Math.max(-0.10, Math.min(0.10, vx * 0.045));
+  tilt += (rollTarget - tilt) * 12 * dt;              // 弹簧回弹，不生硬
+  const pitchTarget = Math.max(-4, Math.min(5, -acc * 0.12));
+  pitch += (pitchTarget - pitch) * 8 * dt;
+
+  // 速度线：从消失点沿自己的方向加速冲出（就是空气被车劈开的样子）
+  for (const s of streaks) {
+    s.r += (0.35 + speed / 110) * dt * 1.3 * s.len;
+    if (s.r > 1) Object.assign(s, newStreak(), { r: 0 });
+  }
+
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    spawn();
+    spawnTimer = Math.max(0.42, 1.55 - time * 0.013);
+  }
+
+  for (const o of obstacles) {
+    const pz = o.z;
+    o.z -= speed * dt;
+    if (o.weave) o.x = o.baseX + Math.sin(time * 2.2 + o.phase) * 0.13;
+    // 防隧道效应：检测"这一帧是否跨过碰撞线"（z=10.3），而不是"是否在区间内"
+    // 高速下一帧能跨好几米，区间判定会被整个跳过去
+    if (pz >= 10.3 && o.z < 10.3 && Math.abs(o.x - player.x) < 0.21) {
+      state = 'over';
+      if (score > best) { best = Math.floor(score); localStorage.setItem('nitro_best', best); }
+    }
+  }
+  obstacles = obstacles.filter(o => o.z > CAM_Z * 0.5);
+}
+
+// —— 弯道系统：模拟真实公路设计 ——
+// 直道 → 平滑进弯 → 保持弯道 → 平滑出弯回直道 → 休息一段 → 再下一个弯
+// 弯道曲率用半个正弦波，进出弯都是渐变的，不会突然甩头
+let track = [], nextD = 0, curveLUT = [];
+
+function ensureTrack() {
+  while (nextD < roadOffset + 400) {
+    nextD += 400 + Math.random() * 350;          // 直道拉长：两个弯之间间隔更久
+    const curveLen = 260 + Math.random() * 200;  // 弯道本身也拉长 → 转弯更缓
+    track.push({
+      d: nextD,
+      len: curveLen,
+      dir: Math.random() < 0.5 ? -1 : 1,
+      amp: 0.00035 + Math.random() * 0.0003      // 曲率再调小 → 过弯更从容
+    });
+    nextD += curveLen;
+  }
+  track = track.filter(s => s.d + s.len > roadOffset - 100);
+}
+
+function curveAt(d) {
+  for (const s of track) {
+    if (d >= s.d && d < s.d + s.len) {
+      return s.dir * s.amp * Math.sin(Math.PI * (d - s.d) / s.len);
+    }
+  }
+  return 0;
+}
+
+// 每帧重建一次"距离 → 横向偏移"查找表（数值积分，130步，开销极小）
+function rebuildCurve() {
+  ensureTrack();
+  curveLUT.length = 0;
+  let heading = 0, off = 0;
+  const step = 2;
+  for (let i = 0; i <= 130; i++) {
+    curveLUT.push(off);
+    heading += curveAt(roadOffset + CAM_Z + i * step) * step;
+    off += heading * step;
+  }
+}
+
+function curveShift(z) {
+  const i = Math.max(0, Math.min(curveLUT.length - 1, Math.round((z - CAM_Z) / 2)));
+  return curveLUT[i];
+}
+
+function project(x, z) {
+  const p = CAM_Z / z;
+  return { p, sx: W / 2 + (x - curveShift(z)) * p * (W / 2), sy: HORIZON + p * (H - HORIZON) };
+}
+
+// —— 性能优化：天空/远山/雾都是静态的，只画一次存成图片 ——
+const skyCanvas = document.createElement('canvas');
+skyCanvas.width = W; skyCanvas.height = H;
+const fogCanvas = document.createElement('canvas');
+fogCanvas.width = W; fogCanvas.height = H;
+
+(function prerender() {
+  const s = skyCanvas.getContext('2d');
+  const g = s.createLinearGradient(0, 0, 0, HORIZON);
+  g.addColorStop(0, '#0b1e3a'); g.addColorStop(1, '#3a6ea5');
+  s.fillStyle = g; s.fillRect(0, 0, W, HORIZON + 1);
+  s.fillStyle = '#ffd76e';
+  s.beginPath(); s.arc(W * 0.78, 80, 34, 0, 7); s.fill();
+  s.fillStyle = 'rgba(255,215,110,.25)';
+  s.beginPath(); s.arc(W * 0.78, 80, 52, 0, 7); s.fill();
+  s.fillStyle = '#24406b';
+  s.beginPath();
+  s.moveTo(0, HORIZON);
+  for (let x = 0; x <= W; x += 90) s.lineTo(x + 45, HORIZON - 30 - 35 * Math.abs(Math.sin(x * 0.7))), s.lineTo(x + 90, HORIZON);
+  s.fill();
+
+  const f = fogCanvas.getContext('2d');
+  const fg = f.createLinearGradient(0, HORIZON, 0, HORIZON + 90);
+  fg.addColorStop(0, 'rgba(58,110,165,.85)');
+  fg.addColorStop(1, 'rgba(58,110,165,0)');
+  f.fillStyle = fg;
+  f.fillRect(0, HORIZON, W, 90);
+})();
+
+function drawRoad() {
+  rebuildCurve();
+  // 性能优化：2像素一行，绘制量减半，肉眼几乎无差别
+  for (let y = HORIZON + 1; y < H; y += 2) {
+    const p = (y - HORIZON) / (H - HORIZON);
+    const z = CAM_Z / p;
+    const stripe = Math.floor((z + roadOffset) / 14) % 2;
+    const half = p * (W / 2);
+    const cx = W / 2 - curveShift(z) * p * (W / 2);   // 弯道：这一行路面的中心横向偏移
+
+    ctx.fillStyle = '#33373e';                            // 路外地面：纯色沥青，无间隔色
+    ctx.fillRect(0, y, W, 2);
+    ctx.fillStyle = '#d9d9d9';                            // 路肩：整条实线白边（高速公款式）
+    ctx.fillRect(cx - half * 1.04, y, half * 0.09, 2);
+    ctx.fillRect(cx + half * 0.95, y, half * 0.09, 2);
+    ctx.fillStyle = stripe ? '#585c66' : '#555963';
+    ctx.fillRect(cx - half * 0.95, y, half * 1.9, 2);
+    if (stripe) {
+      ctx.fillStyle = '#e8d98a';
+      for (const lx of [-0.275, 0.275]) {
+        ctx.fillRect(cx + lx * half - p * 4, y, p * 8, 2);
+      }
+    }
+  }
+}
+
+function car(x, y, w, paint, isPlayer, flame) {
+  const [ph, ps, pl] = paint;
+  const h = w * 0.52;
+  const rrect = (rx, ry, rw, rh, r) => { ctx.beginPath(); ctx.roundRect(rx, ry, rw, rh, r); ctx.fill(); };
+
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  ctx.beginPath(); ctx.ellipse(x, y + h * 0.40, w * 0.56, h * 0.13, 0, 0, 7); ctx.fill();
+
+  for (const wx of [x - w * 0.36, x + w * 0.36]) {
+    const wy = y + h * 0.18, wr = w * 0.11;
+    ctx.fillStyle = '#14161a';
+    ctx.beginPath(); ctx.arc(wx, wy, wr, 0, 7); ctx.fill();
+    ctx.fillStyle = '#9aa2ad';
+    ctx.beginPath(); ctx.arc(wx, wy, wr * 0.55, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#5a626d'; ctx.lineWidth = Math.max(1, w * 0.012);
+    for (let s = 0; s < 4; s++) {
+      const a = s * Math.PI / 2 + 0.4;
+      ctx.beginPath(); ctx.moveTo(wx, wy);
+      ctx.lineTo(wx + Math.cos(a) * wr * 0.5, wy + Math.sin(a) * wr * 0.5); ctx.stroke();
+    }
+  }
+
+  let g = ctx.createLinearGradient(0, y - h * 0.4, 0, y + h * 0.3);
+  g.addColorStop(0, C(ph, ps, pl + 14));
+  g.addColorStop(0.6, C(ph, ps, pl));
+  g.addColorStop(1, C(ph, ps, pl - 16));
+  ctx.fillStyle = g;
+  rrect(x - w * 0.46, y - h * 0.35, w * 0.92, h * 0.62, w * 0.07);
+
+  ctx.fillStyle = C(ph, ps * 0.6, pl - 24);
+  rrect(x - w * 0.46, y + h * 0.13, w * 0.92, h * 0.13, w * 0.04);
+
+  g = ctx.createLinearGradient(0, y - h * 0.62, 0, y - h * 0.25);
+  g.addColorStop(0, C(ph, ps, pl + 6));
+  g.addColorStop(1, C(ph, ps, pl - 6));
+  ctx.fillStyle = g;
+  rrect(x - w * 0.30, y - h * 0.62, w * 0.60, h * 0.38, w * 0.10);
+
+  g = ctx.createLinearGradient(0, y - h * 0.58, 0, y - h * 0.28);
+  g.addColorStop(0, '#6d8698'); g.addColorStop(1, '#24313d');
+  ctx.fillStyle = g;
+  rrect(x - w * 0.24, y - h * 0.56, w * 0.48, h * 0.26, w * 0.06);
+  ctx.fillStyle = 'rgba(255,255,255,.28)';
+  ctx.beginPath();
+  ctx.moveTo(x - w * 0.14, y - h * 0.56);
+  ctx.lineTo(x - w * 0.02, y - h * 0.56);
+  ctx.lineTo(x - w * 0.12, y - h * 0.30);
+  ctx.lineTo(x - w * 0.22, y - h * 0.30);
+  ctx.fill();
+
+  if (isPlayer) {
+    ctx.fillStyle = C(ph, ps, pl - 20);
+    ctx.fillRect(x - w * 0.34, y - h * 0.78, w * 0.05, h * 0.16);
+    ctx.fillRect(x + w * 0.29, y - h * 0.78, w * 0.05, h * 0.16);
+    rrect(x - w * 0.44, y - h * 0.86, w * 0.88, h * 0.10, w * 0.03);
+    // 光晕用半透明色块，比 shadowBlur 便宜几十倍
+    ctx.fillStyle = 'rgba(255,60,60,.25)';
+    rrect(x - w * 0.44, y - h * 0.16, w * 0.88, h * 0.17, w * 0.05);
+    g = ctx.createLinearGradient(x - w * 0.4, 0, x + w * 0.4, 0);
+    g.addColorStop(0, '#ff6b6b'); g.addColorStop(0.5, '#ff2e2e'); g.addColorStop(1, '#ff6b6b');
+    ctx.fillStyle = g;
+    rrect(x - w * 0.40, y - h * 0.12, w * 0.80, h * 0.09, w * 0.03);
+    ctx.fillStyle = '#eef1f4';
+    rrect(x - w * 0.09, y + h * 0.01, w * 0.18, h * 0.11, w * 0.015);
+    ctx.fillStyle = '#33507a'; ctx.font = `bold ${Math.max(6, w * 0.07)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('NITRO', x, y + h * 0.095);
+    for (const ex of [x - w * 0.20, x + w * 0.20]) {
+      ctx.fillStyle = '#c7ccd4';
+      ctx.beginPath(); ctx.arc(ex, y + h * 0.21, w * 0.038, 0, 7); ctx.fill();
+      ctx.fillStyle = '#2a2e35';
+      ctx.beginPath(); ctx.arc(ex, y + h * 0.21, w * 0.024, 0, 7); ctx.fill();
+      // 踩油门 → 排气喷火（每帧随机长度，火焰才会"跳"）
+      if (flame) {
+        const fl = w * (0.10 + Math.random() * 0.10);
+        ctx.fillStyle = 'rgba(255,120,20,.75)';
+        ctx.beginPath(); ctx.ellipse(ex, y + h * 0.21 + fl * 0.5, w * 0.035, fl * 0.6, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = 'rgba(255,230,120,.9)';
+        ctx.beginPath(); ctx.ellipse(ex, y + h * 0.21 + fl * 0.32, w * 0.02, fl * 0.34, 0, 0, 7); ctx.fill();
+      }
+    }
+  } else {
+    ctx.fillStyle = 'rgba(255,240,180,.25)';
+    rrect(x - w * 0.44, y - h * 0.12, w * 0.24, h * 0.18, w * 0.05);
+    rrect(x + w * 0.20, y - h * 0.12, w * 0.24, h * 0.18, w * 0.05);
+    g = ctx.createLinearGradient(0, y - h * 0.1, 0, y + h * 0.02);
+    g.addColorStop(0, '#fff7d6'); g.addColorStop(1, '#ffd76e');
+    ctx.fillStyle = g;
+    rrect(x - w * 0.40, y - h * 0.08, w * 0.16, h * 0.10, w * 0.03);
+    rrect(x + w * 0.24, y - h * 0.08, w * 0.16, h * 0.10, w * 0.03);
+    ctx.fillStyle = '#1c2128';
+    rrect(x - w * 0.15, y - h * 0.06, w * 0.30, h * 0.12, w * 0.02);
+    ctx.strokeStyle = 'rgba(180,190,200,.5)'; ctx.lineWidth = Math.max(1, w * 0.008);
+    for (let s = -2; s <= 2; s++) {
+      ctx.beginPath();
+      ctx.moveTo(x + s * w * 0.05, y - h * 0.06);
+      ctx.lineTo(x + s * w * 0.05, y + h * 0.06);
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#3a3f47';
+    ctx.beginPath(); ctx.arc(x - w * 0.36, y + h * 0.17, w * 0.03, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + w * 0.36, y + h * 0.17, w * 0.03, 0, 7); ctx.fill();
+  }
+}
+
+function drawObstacles() {
+  for (const o of [...obstacles].sort((a, b) => b.z - a.z)) {
+    const { p, sx, sy } = project(o.x, o.z);
+    if (p <= 0) continue;
+    car(sx, sy, 0.30 * p * (W / 2), o.paint, false, false);
+  }
+}
+
+function drawPlayer() {
+  const accelerating = state === 'play' && (keys['ArrowUp'] || keys['w'] || keys['W']);
+  ctx.save();
+  ctx.translate(W / 2 + (player.x - curveShift(10.3)) * (W / 2), H - 95 + pitch);
+  ctx.rotate(tilt);
+  car(0, 0, 135, PLAYER_PAINT, true, accelerating);
+  // 车尾空气尾流：高速时从尾翼两端拖出的两道涡流，微微摆动
+  if (speed > 55) {
+    const a = Math.min(0.13, (speed - 55) / 55 * 0.15);
+    ctx.strokeStyle = `rgba(255,255,255,${a})`;
+    ctx.lineWidth = 3;
+    for (const side of [-1, 1]) {
+      const wave = Math.sin(time * 18 + side) * 6;
+      ctx.beginPath();
+      ctx.moveTo(side * 52, -58);
+      ctx.quadraticCurveTo(side * (66 + wave), 10, side * (88 + wave), 95);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+// 高速速度线：以消失点为源头、沿行车方向放射的空气流（靠近时变长变亮）
+function drawStreaks() {
+  if (speed < 55) return;
+  const VX = W / 2, VY = HORIZON;
+  const maxR = Math.hypot(W / 2, H - HORIZON);
+  ctx.lineWidth = 2;
+  for (const s of streaks) {
+    const L = Math.hypot(s.dx, s.dy), ux = s.dx / L, uy = s.dy / L;
+    const dist = s.r * maxR;
+    const x1 = VX + ux * dist, y1 = VY + uy * dist;
+    if (y1 < VY + 12) continue;                       // 刚从地平线"出生"的先不画
+    const sl = (20 + 90 * (speed / 110)) * s.len * (0.3 + s.r);
+    const a = Math.min(0.17, (speed - 55) / 55 * 0.2) * Math.min(1, s.r * 2);
+    ctx.strokeStyle = `rgba(255,255,255,${a})`;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 + ux * sl, y1 + uy * sl);
+    ctx.stroke();
+  }
+}
+
+function hud() {
+  const level = 1 + Math.floor(time / 15);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(`速度 ${Math.floor(speed * 6)} km/h`, 24, 40);
+  ctx.fillText(`里程 ${Math.floor(score)} m`, 24, 70);
+  ctx.fillText(`等级 Lv.${level}`, 24, 100);
+  ctx.textAlign = 'right';
+  ctx.fillText(`最佳 ${best} m`, W - 24, 40);
+  ctx.font = '14px sans-serif';
+  ctx.fillStyle = fps >= 55 ? '#7dff8a' : '#ffb04d';
+  ctx.fillText(`刷新率 ${Math.round(fps)} Hz`, W - 24, 62);
+}
+
+function overlay(title, lines) {
+  ctx.fillStyle = 'rgba(5,10,25,.72)'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#4dd2ff'; ctx.font = 'bold 56px sans-serif';
+  ctx.fillText(title, W / 2, H / 2 - 40);
+  ctx.fillStyle = '#fff'; ctx.font = '24px sans-serif';
+  lines.forEach((t, i) => ctx.fillText(t, W / 2, H / 2 + 20 + i * 36));
+}
+
+function draw() {
+  ctx.drawImage(skyCanvas, 0, 0);
+  drawRoad();
+  ctx.drawImage(fogCanvas, 0, 0);
+  if (state !== 'title') { drawStreaks(); drawObstacles(); drawPlayer(); hud(); }
+  if (state === 'title') overlay('霓虹狂飙', ['← → 换车道   ↑ 油门   ↓ 刹车', '按 空格 发车']);
+  if (state === 'over') overlay('💥 撞车了', [`这次跑了 ${Math.floor(score)} 米`, '按 空格 再来一局']);
+}
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  fps = fps * 0.92 + (1 / dt) * 0.08;
+  update(dt); draw();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
