@@ -18,7 +18,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.0.4
+   街头萌战 STREET CUP · v1.0.5
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
    ——— 首个正式发布版 v1.0.0 ———
    v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
@@ -26,6 +26,7 @@
    v1.0.2：队友前插跑位——我方持球时斜插前方侧翼空当，直塞有人接
    v1.0.3：抢断改成"碰到球才算"（碰人不算）/ 小人加手臂木棍+球袜球鞋迈步
    v1.0.4：门将速度 = 球员速度 × 0.75（直接套公式，不再单独压慢）
+   v1.0.5：门将再提速至 ×0.85 / 门将抱球时对方必须退出禁区才开球
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -42,7 +43,7 @@ var LX = 46, RX = 674, TY = 84, BY = 876;
 var GOAL_HALF = 95;
 var BOX_HALF = 128;            // 禁区半宽
 var BOX_DEPTH = 124;           // 禁区进深
-var GK_SPEED_F = 0.75;         // 门将移动速度 = 球员速度(172) × 0.75
+var GK_SPEED_F = 0.85;         // 门将移动速度 = 球员速度(172) × 0.85
 var GK_REACH = 10;             // 门将手套够得着的余量（别太大，否则像磁吸）
 
 // ---------- 队伍数据 ----------
@@ -276,6 +277,14 @@ function nearestEnemyOf(p) {
 
 function aiThink(p, dt) {
   if (p.isGK) { aiKeeper(p, dt); return; }      // 门将走专属逻辑（站门/扑救/开球）
+
+  // 对方门将抱着球：自觉退出对方禁区，别堵门（门将看到没人了才会开球）
+  if (ball.owner && ball.owner.isGK && ball.owner.team !== p.team) {
+    var eb = boxOf(ball.owner.team);
+    var outY = eb.gy + eb.s * (BOX_DEPTH + 50);  // 退到禁区外一步
+    aiSteer(p, clamp(p.x, LX + 25, RX - 25), outY, 150, dt);
+    return;
+  }
   // —— 我正带球：攻门 / 被逼抢就传 / 否则向前带 ——
   if (ball.owner === p) {
     var g = enemyGoalOf(p.team);
@@ -449,11 +458,13 @@ function aiKeeper(p, dt) {
   var box = boxOf(p.team);
   var g = enemyGoalOf(p.team);
 
-  // 门将拿住球：先抱稳观察，找到真正空位的队友才传；实在没线路才大脚解围
+  // 门将拿住球：先抱稳观察，禁区内还有对方球员就不传（等他们退出去）；
+  // 找到真正空位的队友才传；实在没线路才大脚解围
   if (ball.owner === p) {
     p.gkHold += dt;
     aiSteer(p, p.x, p.y, 40, dt);
     if (p.gkHold < 0.9) return;                  // 至少抱 0.9 秒，观察传球线路
+    if (p.gkHold < 4 && foeInMyBox(p)) return;   // 禁区内有敌人：抱着等他们退出去
     var t = outletTeammate(p);
     if (t) {
       p.gkHold = 0;
@@ -474,9 +485,19 @@ function aiKeeper(p, dt) {
   var front = clamp((distLine - 130) / ((BY - TY) * 0.8), 0, 1);
   var off = 18 + front * (BOX_DEPTH - 34);
   var ty = box.gy + box.s * off;
-  aiSteer(p, tx, ty, 172 * GK_SPEED_F, dt);      // 门将速度 = 球员 172 × 0.75
+  aiSteer(p, tx, ty, 172 * GK_SPEED_F, dt);      // 门将速度 = 球员 172 × 0.85
   var fx = ball.x - p.x, fy = ball.y - p.y, fm = vlen(fx, fy) || 1;
   p.face.x = fx / fm; p.face.y = fy / fm;
+}
+// 有对方球员站在本方禁区里吗？（门将开球前要等他们退出去）
+function foeInMyBox(gk) {
+  var box = boxOf(gk.team);
+  for (var i = 0; i < players.length; i++) {
+    var q = players[i];
+    if (q.team === gk.team || q.isGK) continue;
+    if (q.x > box.x0 && q.x < box.x1 && q.y > box.loY && q.y < box.hiY) return true;
+  }
+  return false;
 }
 // 门将把球分给谁：只考虑"传球线路真正空"的队友（身边 60px 内没敌人），否则返回 null
 function outletTeammate(gk) {
@@ -687,6 +708,19 @@ function update(dt) {
     var bbox = boxOf(p.team);
     p.x = clamp(p.x, bbox.x0 + 6, bbox.x1 - 6);
     p.y = clamp(p.y, bbox.loY + 6, bbox.hiY - 6);
+  }
+
+  // 门将抱球期间，对方球员一律不得留在禁区（规则性驱离，对玩家操控的也生效）
+  if (ball.owner && ball.owner.isGK) {
+    var hbox = boxOf(ball.owner.team);
+    var outY2 = hbox.gy + hbox.s * (BOX_DEPTH + 46);
+    for (i = 0; i < players.length; i++) {
+      p = players[i];
+      if (p.team === ball.owner.team || p.isGK) continue;
+      if (p.x > hbox.x0 && p.x < hbox.x1 && p.y > hbox.loY && p.y < hbox.hiY) {
+        p.y += (outY2 - p.y) * Math.min(1, dt * 6);   // 温柔地请出去
+      }
+    }
   }
 
   // 球
@@ -908,7 +942,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.4', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.5', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
