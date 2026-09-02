@@ -18,13 +18,14 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.0.3
+   街头萌战 STREET CUP · v1.0.4
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
    ——— 首个正式发布版 v1.0.0 ———
    v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
           门将抱球后先观察线路再分球，没空位才大脚解围
    v1.0.2：队友前插跑位——我方持球时斜插前方侧翼空当，直塞有人接
    v1.0.3：抢断改成"碰到球才算"（碰人不算）/ 小人加手臂木棍+球袜球鞋迈步
+   v1.0.4：门将速度 = 球员速度 × 0.75（直接套公式，不再单独压慢）
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -41,7 +42,7 @@ var LX = 46, RX = 674, TY = 84, BY = 876;
 var GOAL_HALF = 95;
 var BOX_HALF = 128;            // 禁区半宽
 var BOX_DEPTH = 124;           // 禁区进深
-var GK_SPEED_F = 0.95;         // 门将移动速度 = 场上球员 × 0.95（只慢一点点）
+var GK_SPEED_F = 0.75;         // 门将移动速度 = 球员速度(172) × 0.75
 var GK_REACH = 10;             // 门将手套够得着的余量（别太大，否则像磁吸）
 
 // ---------- 队伍数据 ----------
@@ -473,7 +474,7 @@ function aiKeeper(p, dt) {
   var front = clamp((distLine - 130) / ((BY - TY) * 0.8), 0, 1);
   var off = 18 + front * (BOX_DEPTH - 34);
   var ty = box.gy + box.s * off;
-  aiSteer(p, tx, ty, 105 * GK_SPEED_F, dt);      // 门将慢：×0.75
+  aiSteer(p, tx, ty, 172 * GK_SPEED_F, dt);      // 门将速度 = 球员 172 × 0.75
   var fx = ball.x - p.x, fy = ball.y - p.y, fm = vlen(fx, fy) || 1;
   p.face.x = fx / fm; p.face.y = fy / fm;
 }
@@ -907,7 +908,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.3', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.4', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
