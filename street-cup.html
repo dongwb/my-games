@@ -18,9 +18,11 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.0.0
+   街头萌战 STREET CUP · v1.0.1
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
-   ——— 首个正式发布版 ———
+   ——— 首个正式发布版 v1.0.0 ———
+   v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
+          门将抱球后先观察线路再分球，没空位才大脚解围
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -37,8 +39,8 @@ var LX = 46, RX = 674, TY = 84, BY = 876;
 var GOAL_HALF = 95;
 var BOX_HALF = 128;            // 禁区半宽
 var BOX_DEPTH = 124;           // 禁区进深
-var GK_SPEED_F = 0.75;         // 门将移动速度 = 场上球员 × 0.75
-var GK_REACH = 33;             // 门将扑救"够得着"的半径加成
+var GK_SPEED_F = 0.95;         // 门将移动速度 = 场上球员 × 0.95（只慢一点点）
+var GK_REACH = 10;             // 门将手套够得着的余量（别太大，否则像磁吸）
 
 // ---------- 队伍数据 ----------
 var TEAMS = [
@@ -455,13 +457,21 @@ function aiKeeper(p, dt) {
   var box = boxOf(p.team);
   var g = enemyGoalOf(p.team);
 
-  // 门将拿住球：停一拍，然后分给空位队友；没空位就大脚开出去
+  // 门将拿住球：先抱稳观察，找到真正空位的队友才传；实在没线路才大脚解围
   if (ball.owner === p) {
-    if (p.gkHold < 0.45) { p.gkHold += dt; aiSteer(p, p.x, p.y, 40, dt); return; }
-    p.gkHold = 0;
+    p.gkHold += dt;
+    aiSteer(p, p.x, p.y, 40, dt);
+    if (p.gkHold < 0.9) return;                  // 至少抱 0.9 秒，观察传球线路
     var t = outletTeammate(p);
-    if (t) kickToward(p, t.x + t.vx * 0.2, t.y + t.vy * 0.2, 480);
-    else   kickToward(p, g.x, g.y, 640);
+    if (t) {
+      p.gkHold = 0;
+      kickToward(p, t.x + t.vx * 0.2, t.y + t.vy * 0.2, 420);
+      return;
+    }
+    if (p.gkHold > 2.5) {                        // 等太久也没人空 → 大脚开出去
+      p.gkHold = 0;
+      kickToward(p, g.x, g.y, 640);
+    }
     return;
   }
   p.gkHold = 0;
@@ -476,7 +486,7 @@ function aiKeeper(p, dt) {
   var fx = ball.x - p.x, fy = ball.y - p.y, fm = vlen(fx, fy) || 1;
   p.face.x = fx / fm; p.face.y = fy / fm;
 }
-// 门将把球分给谁：空位更大、更靠前、离防守球员更远的场上队友
+// 门将把球分给谁：只考虑"传球线路真正空"的队友（身边 60px 内没敌人），否则返回 null
 function outletTeammate(gk) {
   var g = enemyGoalOf(gk.team);
   var best = null, bestScore = -1e9;
@@ -484,12 +494,13 @@ function outletTeammate(gk) {
     var t = players[i];
     if (t.team !== gk.team || t === gk || t.isGK) continue;
     var th = nearestEnemyOf(t);
-    var t2g = vlen(g.x - t.x, g.y - t.y);
     var open = th.p ? th.d : 999;
-    var score = (open > 55 ? 110 : open - 80) - t2g * 0.2;
+    if (open <= 60) continue;                    // 线路被贴着，不考虑
+    var t2g = vlen(g.x - t.x, g.y - t.y);
+    var score = open - t2g * 0.2;                // 越空、越靠前越好
     if (score > bestScore) { bestScore = score; best = t; }
   }
-  return best;
+  return best;                                   // null = 没有安全线路
 }
 // 这球门将能不能扑住：球在自己禁区、正朝自己门飞、又够得着
 function keeperCanCatch() {
@@ -893,7 +904,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.1', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
