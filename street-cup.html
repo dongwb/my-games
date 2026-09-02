@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>街头萌战 STREET CUP — 阿根廷 vs 西班牙</title>
+<style>
+  html,body{margin:0;background:#141a22;height:100%;display:flex;align-items:center;justify-content:center;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;}
+  #wrap{position:relative;}
+  canvas{width:min(96vw,calc(96vh*0.75));background:#1d2733;border-radius:14px;box-shadow:0 10px 40px rgba(0,0,0,.5);display:block;}
+  #hint{color:#7c8b9d;font-size:13px;text-align:center;margin-top:10px;letter-spacing:.5px;}
+  b{color:#c8d3de;}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="cv" width="720" height="960"></canvas>
+  <div id="hint">主菜单：<b>A</b> 阿根廷 / <b>S</b> 西班牙 · <b>Enter</b> 开球 &nbsp;|&nbsp; 比赛中：<b>方向键/WASD</b> 跑动 · <b>空格</b> 传球/射门</div>
+</div>
+<script>
+/* ============================================================
+   街头萌战 STREET CUP · v1.0.0
+   3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
+   ——— 首个正式发布版 ———
+   v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
+   v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
+          全员移动速度减半 / 抢断判定放宽到贴身即可触发
+   v0.3.1：传球=按下瞬间的面朝方向直线出脚，不再瞄队友提前量
+   v0.3.2：传球恢复瞄队友（锁定出脚瞬间位置）/ 修回防卡顿：
+          逼抢人带迟滞不乱换 + 操控换人有 0.35s 冷静期
+   ============================================================ */
+
+var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+var W = 720, H = 960, CX = 360;
+
+// ---------- 球场 ----------
+var LX = 46, RX = 674, TY = 84, BY = 876;
+var GOAL_HALF = 95;
+var BOX_HALF = 128;            // 禁区半宽
+var BOX_DEPTH = 124;           // 禁区进深
+var GK_SPEED_F = 0.75;         // 门将移动速度 = 场上球员 × 0.75
+var GK_REACH = 33;             // 门将扑救"够得着"的半径加成
+
+// ---------- 队伍数据 ----------
+var TEAMS = [
+  { id:'ARG', name:'阿根廷', jersey:'#FFFFFF', stripe:'#75AADB', collar:'#0C2340',
+    shorts:'#0C2340', socks:'#75AADB', gk:'#22c3ac' },
+  { id:'ESP', name:'西班牙', jersey:'#AA151B', stripe:'#F1BF00', collar:'#0C2340',
+    shorts:'#0C2340', socks:'#AA151B', gk:'#ffad1f' }
+];
+
+// ---------- 状态 ----------
+var state = 'menu';            // menu | kickoff | play | over
+var pickIdx = 0;               // 玩家队
+var players = [], ball = null;
+var scores = [0, 0];           // [玩家队, AI队]
+var clock = 120, goalFlash = 0, goalSide = -1, readyT = 0;
+var winner = null;
+var ctrl = null;               // 本帧玩家真正操控的人
+var ctrlAge = 99;              // 距上次换人过了几秒（防频繁切换）
+var preferCtrl = null;         // 传球瞬间锁定的接球人（短暂优先操控他）
+var preferT = 0;               // preferCtrl 的有效倒计时
+var prevSpace = false;         // 空格按下沿检测
+var lastKickTeam = -1;         // 球最后是被哪一队踢的（传球/射门归属）
+
+// ---------- 按键 ----------
+var KEYS = {};
+addEventListener('keydown', function (e) {
+  var k = e.key.toLowerCase();
+  if ([' ', 'arrowup','arrowdown','arrowleft','arrowright'].indexOf(k) >= 0) e.preventDefault();
+  if (e.repeat) return;
+  KEYS[k] = true;
+  if (state === 'menu') {
+    if (k === 'a') pickIdx = 0;
+    if (k === 's') pickIdx = 1;
+    if (k === 'enter') { snd('whistle', 0.18, 1.0); startMatch(); }
+  } else if (state === 'over') {
+    if (k === ' ' || k === 'enter') { state = 'menu'; scores = [0, 0]; }
+  }
+});
+addEventListener('keyup', function (e) { KEYS[e.key.toLowerCase()] = false; });
+
+// ---------- 音效 ----------
+var AC = null;
+function snd(type, dur, f, f2, vol) {
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    if (AC.state === 'suspended') AC.resume();
+    var o = AC.createOscillator(), g = AC.createGain();
+    o.type = type || 'square';
+    o.frequency.setValueAtTime(f || 220, AC.currentTime);
+    if (f2) o.frequency.exponentialRampToValueAtTime(f2, AC.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.045, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + dur + 0.02);
+  } catch (e) {}
+}
+function kickSfx() { snd('square', 0.07, 320, 220); }
+function goalSfx()  { snd('square', 0.12, 520, 660); setTimeout(function(){ snd('square', 0.16, 784, 988); }, 120); }
+
+// ---------- 数学工具 ----------
+function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+function dist2(x1, y1, x2, y2) { var dx = x2 - x1, dy = y2 - y1; return dx * dx + dy * dy; }
+function vlen(x, y) { return Math.sqrt(x * x + y * y); }
+function enemyGoalOf(team) { return { x: CX, y: team === 0 ? TY : BY }; }
+function myGoalOf(team)    { return { x: CX, y: team === 0 ? BY : TY }; }
+
+// 某队防守的小禁区（贴本方球门那片）
+function boxOf(team) {
+  var gy = team === 0 ? BY : TY;
+  var s  = team === 0 ? -1 : 1;                 // 从门线指向场内的方向
+  var loY = Math.min(gy, gy + s * BOX_DEPTH);
+  var hiY = Math.max(gy, gy + s * BOX_DEPTH);
+  return { team: team, x0: CX - BOX_HALF, x1: CX + BOX_HALF, gy: gy, s: s, loY: loY, hiY: hiY };
+}
+
+// ---------- 建队 ----------
+function mkPlayer(team, slot) {
+  var isGK = slot === 1;                         // 槽位 1 = 门将，0/2 = 场上球员
+  var x, y;
+  if (isGK) { x = CX; y = team === 0 ? BY - 40 : TY + 40; }
+  else { x = CX - 110 + (slot === 0 ? 0 : 220); y = team === 0 ? BY - 170 : TY + 170; }
+  return {
+    team: team, slot: slot, isGK: isGK,
+    x: x, y: y, vx: 0, vy: 0,
+    r: isGK ? 16 : 15,
+    face: { x: 0, y: team === 0 ? -1 : 1 },
+    blink: Math.random() * 4, bob: 0, moving: false,
+    gkHold: 0
+  };
+}
+function startMatch() {
+  scores = [0, 0]; clock = 120; winner = null; lastKickTeam = -1;
+  chaserOf = [null, null]; ctrlAge = 99;
+  players = [];
+  ball = { x: CX, y: (TY + BY) / 2, vx: 0, vy: 0, r: 9, owner: null, free: 0 };
+  for (var s = 0; s < 3; s++) {
+    players.push(mkPlayer(0, s));               // 玩家队，守下方门
+    players.push(mkPlayer(1, s));               // AI 队，守上方门
+  }
+  setupPositions();
+  state = 'kickoff'; readyT = 1.2; goalFlash = 0;
+}
+// 中圈开球站位
+function setupPositions() {
+  ball.x = CX; ball.y = (TY + BY) / 2; ball.vx = ball.vy = 0; ball.owner = null; ball.free = 0;
+  lastKickTeam = -1;
+  preferCtrl = null; preferT = 0;
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    if (p.isGK) {
+      p.x = CX; p.y = p.team === 0 ? BY - 24 : TY + 24;   // 门将守在门口
+    } else {
+      var dir = p.team === 0 ? 1 : -1;                     // 队0 守下方
+      p.x = p.slot === 0 ? CX - 110 : CX + 110;
+      p.y = (TY + BY) / 2 + dir * 90;
+    }
+    p.vx = p.vy = 0; p.gkHold = 0;
+    p.face.x = 0; p.face.y = p.team === 0 ? -1 : 1;
+    // 倒计时阶段把箭头交给玩家队左前锋，开球即冲刺
+    if (p.team === pickIdx && !p.isGK && p.slot === 0) ctrl = p;
+  }
+}
+
+// ---------- 玩家真正操控谁：持球=带球人；传球=锁接球人；乱战=最近的人（带迟滞不抖） ----------
+function controlledPlayer() {
+  if (!ball) return null;
+  // 我队场上球员拿球才接管；门将拿球交给 AI 开球，不抢你控制
+  if (ball.owner && ball.owner.team === pickIdx && !ball.owner.isGK) return ball.owner;
+  // 刚传出去的球：优先操控接球人，可以直接迎球跑位
+  if (preferCtrl && preferT > 0 && !ball.owner && preferCtrl.team === pickIdx && !preferCtrl.isGK) return preferCtrl;
+  var n = nearestFieldOfTeam(ball.x, ball.y, pickIdx);
+  // 迟滞：球没人拿时，除非另一个人明显更近（近 1/3 以上），否则不换人
+  if (ctrl && ctrl.team === pickIdx && ctrl !== n && !ctrl.isGK) {
+    if (ctrlAge < 0.35) return ctrl;           // 刚换过人，先冷静一下
+    var dOld = dist2(ctrl.x, ctrl.y, ball.x, ball.y);
+    var dNew = dist2(n.x, n.y, ball.x, ball.y);
+    if (dNew * 1.5 > dOld) return ctrl;
+  }
+  return n;
+}
+function nearestOfTeam(x, y, team) {
+  var b = null, bd = 1e9;
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    if (p.team !== team) continue;
+    var d = dist2(p.x, p.y, x, y);
+    if (d < bd) { bd = d; b = p; }
+  }
+  return b;
+}
+function nearestFieldOfTeam(x, y, team) {        // 场上球员（不含门将）离点最近
+  var b = null, bd = 1e9;
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    if (p.team !== team || p.isGK) continue;
+    var d = dist2(p.x, p.y, x, y);
+    if (d < bd) { bd = d; b = p; }
+  }
+  return b;
+}
+function gkOf(team) {
+  for (var i = 0; i < players.length; i++) {
+    if (players[i].team === team && players[i].isGK) return players[i];
+  }
+  return null;
+}
+// 每队的逼抢人（带迟滞）：两个防守队员谁近谁抢，但一旦定了就不轻易换人，
+// 否则两人距离接近时每帧互换，跑位目标左右乱跳 = 你看到的"卡顿"
+var chaserOf = [null, null];
+function pickChaser(team) {
+  var n = nearestFieldOfTeam(ball.x, ball.y, team);
+  var cur = chaserOf[team];
+  if (cur && !cur.isGK && cur !== n) {
+    var dOld = dist2(cur.x, cur.y, ball.x, ball.y);
+    var dNew = dist2(n.x, n.y, ball.x, ball.y);
+    if (dNew * 1.4 > dOld) n = cur;            // 旧逼抢人没明显更远，就继续让他抢
+  }
+  chaserOf[team] = n;
+  return n;
+}
+
+// ---------- 人类操控 ----------
+function humanMove(p, dt) {
+  var dx = 0, dy = 0;
+  if (KEYS['arrowleft']  || KEYS['a']) dx -= 1;
+  if (KEYS['arrowright'] || KEYS['d']) dx += 1;
+  if (KEYS['arrowup']    || KEYS['w']) dy -= 1;
+  if (KEYS['arrowdown']  || KEYS['s']) dy += 1;
+  if (dx || dy) {
+    var m = vlen(dx, dy); dx /= m; dy /= m;
+    p.vx = dx * 172; p.vy = dy * 172;
+    p.face.x = dx; p.face.y = dy;
+    p.moving = true;
+  } else {
+    p.vx *= 0.82; p.vy *= 0.82; p.moving = false;
+    // 停下带球时面朝对方球门，方便原地起脚/射门
+    if (ball && ball.owner === p) {
+      var g = enemyGoalOf(p.team);
+      var fx = g.x - p.x, fy = g.y - p.y, fm = vlen(fx, fy) || 1;
+      p.face.x = fx / fm; p.face.y = fy / fm;
+    }
+  }
+}
+
+// ---------- AI 平滑移动（有惯性，不抽搐） ----------
+function aiSteer(p, tx, ty, speed, dt) {
+  var dx = tx - p.x, dy = ty - p.y, d = vlen(dx, dy) || 1;
+  var ease = clamp(d / 80, 0.15, 1);
+  var desX = dx / d * speed * ease, desY = dy / d * speed * ease;
+  var a = Math.min(1, dt * 8);
+  p.vx += (desX - p.vx) * a;
+  p.vy += (desY - p.vy) * a;
+  if (d > 3 && vlen(p.vx, p.vy) > 30) { p.face.x = dx / d; p.face.y = dy / d; }
+  if (d < 24) { p.vx *= 0.82; p.vy *= 0.82; }
+}
+function nearestEnemyOf(p) {
+  var b = null, bd = 1e9;
+  for (var i = 0; i < players.length; i++) {
+    var q = players[i];
+    if (q.team === p.team || q === p) continue;
+    var d = dist2(q.x, q.y, p.x, p.y);
+    if (d < bd) { bd = d; b = q; }
+  }
+  return { p: b, d: Math.sqrt(bd) };
+}
+
+// ============================================================
+//  唯一 AI 大脑（两队共用，只换皮肤）
+// ============================================================
+
+function aiThink(p, dt) {
+  if (p.isGK) { aiKeeper(p, dt); return; }      // 门将走专属逻辑（站门/扑救/开球）
+  // —— 我正带球：攻门 / 被逼抢就传 / 否则向前带 ——
+  if (ball.owner === p) {
+    var g = enemyGoalOf(p.team);
+    var dG = vlen(g.x - p.x, g.y - p.y) || 1;
+    var th = nearestEnemyOf(p);
+
+    // 近门果断射
+    if (dG < 300) {
+      var chance = (1 - dG / 300) * 0.85;
+      if (th.p && th.d < 75) chance *= 0.35;
+      if (Math.random() < chance) {
+        var aimX = CX + (Math.random() < 0.5 ? -1 : 1) * (24 + Math.random() * 46);   // 打角度别喂门将
+        kickToward(p, clamp(aimX, CX - GOAL_HALF + 12, CX + GOAL_HALF - 12), g.y, 660);
+        return;
+      }
+    }
+    // 被贴身逼抢 → 找空位队友
+    if (th.p && th.d < 60) {
+      var t = bestTeammate(p);
+      if (t) { kickToward(p, t.x + t.vx * 0.2, t.y + t.vy * 0.2, 340); return; }
+    }
+    // 带球向前（顺带躲开挡路的敌人）
+    var ex = g.x - p.x, ey = g.y - p.y;
+    var ev = th.p && th.d < 90 ? (p.x - th.p.x) / (th.d || 1) * 70 : 0;
+    aiSteer(p,
+      clamp(p.x + ex / dG * 90 + ev, LX + 25, RX - 25),
+      clamp(p.y + ey / dG * 90, TY + 25, BY - 25),
+      126, dt);
+    return;
+  }
+
+  var mine = myGoalOf(p.team);
+
+  // —— 我方持球（无球跑位：保持小三角，不散开） ——
+  if (ball.owner && ball.owner.team === p.team) {
+    supportRun(p, ball.owner, dt);
+    return;
+  }
+  // —— 对方持球：一人逼抢，两人缩回门前站位 ——
+  if (ball.owner) {
+    var chaser = pickChaser(p.team);
+    if (chaser === p) {
+      // 预判持球人，正面贴上去
+      var tx = ball.owner.x + ball.owner.vx * 0.14;
+      var ty = ball.owner.y + ball.owner.vy * 0.14;
+      aiSteer(p, clamp(tx, LX + 20, RX - 20), clamp(ty, TY + 20, BY - 20), 150, dt);
+    } else {
+      holdDefensiveLine(p, mine, ball, dt);
+    }
+    return;
+  }
+  // —— 无主球：最近的人去抢，其余回到本方半场中线附近 ——
+  if (nearestFieldOfTeam(ball.x, ball.y, p.team) === p) {
+    aiSteer(p, ball.x, ball.y, 138, dt);
+  } else {
+    var cy = (TY + BY) / 2;
+    var dir = p.team === 0 ? 1 : -1;             // 站本方那半边（队0守下方、队1守上方）
+    var side = p.slot === 2 ? 1 : -1;            // 左右岔开
+    aiSteer(p, clamp(CX + side * 120, LX + 25, RX - 25), cy + dir * 60, 85, dt);
+  }
+}
+
+// 无球队员：绕着持球队友摆"小三角"，永远有传球角度，且不飞远
+function supportRun(p, c, dt) {
+  var g = enemyGoalOf(p.team);
+  var fx = g.x - c.x, fy = g.y - c.y, fl = vlen(fx, fy) || 1;
+  var fwdX = fx / fl, fwdY = fy / fl;
+  var rX = -fwdY, rY = fwdX;                     // 进攻方向右侧单位向量
+
+  // 谁是"近接应"谁靠后短传，谁"远"谁前插 —— 由到持球人距离定
+  var other = null;
+  for (var i = 0; i < players.length; i++) {
+    if (players[i].team === p.team && players[i] !== p && players[i] !== c && !players[i].isGK) other = players[i];
+  }
+  var amI = vlen(p.x - c.x, p.y - c.y);
+  var om = other ? vlen(other.x - c.x, other.y - c.y) : 1e9;
+  var rel = (p.x - c.x) * rX + (p.y - c.y) * rY; // 在右侧方向的分量定左右
+  var side = rel > 0 ? 1 : -1;
+  if (rel === 0) side = p.x >= c.x ? 1 : -1;
+
+  var tx, ty;
+  if (amI <= om) {
+    // 近端：在持球人斜后方，做安全短传点
+    tx = c.x + rX * side * 85 - fwdX * 25;
+    ty = c.y + rY * side * 85 - fwdY * 25;
+  } else {
+    // 远端：前插到前方另一侧，接直塞
+    tx = c.x + rX * (-side) * 85 + fwdX * 120;
+    ty = c.y + rY * (-side) * 85 + fwdY * 120;
+  }
+  // 都别离开持球人太远（控住队形），也别撞到敌人
+  var th = nearestEnemyOf(p);
+  if (th.p && th.d < 42) { tx = c.x + (tx - c.x) * 0.35; ty = c.y + (ty - c.y) * 0.35; }
+  aiSteer(p,
+    clamp(tx, LX + 25, RX - 25),
+    clamp(ty, TY + 25, BY - 25),
+    102, dt);
+}
+
+// 防守站位：两个退防队员一左一右守住"球—本方球门"连线
+function holdDefensiveLine(p, mine, b, dt) {
+  var ch = pickChaser(p.team);                  // 逼抢的那个人（带迟滞，不会来回跳）
+  var other = null;
+  for (var i = 0; i < players.length; i++) {
+    if (players[i].team === p.team && players[i] !== p && players[i] !== ch && !players[i].isGK) other = players[i];
+  }
+  var left = other ? p.slot < other.slot : true;  // 槽位小的守左门柱
+  var post = left ? -58 : 58;
+  var tx = clamp(mine.x + (b.x - mine.x) * 0.5 + post, CX - GOAL_HALF - 30, CX + GOAL_HALF + 30);
+  var dy = b.y - mine.y;
+  var depth = clamp(vlen(b.x - mine.x, dy) / 700, 0.3, 0.85);
+  var ty = clamp(mine.y + dy * depth, TY + 30, BY - 30);
+  aiSteer(p, tx, ty, 100, dt);
+}
+
+// 找一个更好的传球对象（比带球人更靠近对方球门、又没被贴死）
+function bestTeammate(p) {
+  var g = enemyGoalOf(p.team);
+  var p2g = vlen(g.x - p.x, g.y - p.y);
+  var best = null, bestScore = -1e9;
+  for (var i = 0; i < players.length; i++) {
+    var t = players[i];
+    if (t.team !== p.team || t === p || t.isGK) continue;
+    var th = nearestEnemyOf(t);
+    var t2g = vlen(g.x - t.x, g.y - t.y);
+    var open = th.p ? th.d : 999;
+    var score = (p2g - t2g) * 2 - (open < 48 ? 160 : 0) - 0.25 * t2g;
+    if (open > 34 && score > bestScore) { bestScore = score; best = t; }
+  }
+  return bestScore > 18 ? best : null;
+}
+
+// 出脚：把球朝 (tx,ty) 踢出去，之后球只靠惯性滚动，不再被谁带着乱动
+function kickToward(p, tx, ty, sp) {
+  var dx = tx - p.x, dy = ty - p.y, m = vlen(dx, dy) || 1;
+  var fx = dx / m, fy = dy / m;
+  ball.vx = fx * sp; ball.vy = fy * sp;
+  ball.owner = null; ball.free = 0.14;
+  lastKickTeam = p.team;
+  p.face.x = fx; p.face.y = fy;
+  p.vx = fx * 60; p.vy = fy * 60;               // 出脚轻微前顶
+  kickSfx();
+}
+
+// 人类按空格：优先传"面朝方向"里的空位队友；没人就射门（带左右方向=打角度）
+function humanKick(p) {
+  var g = enemyGoalOf(p.team);
+  var best = null, bestDot = 0.55;
+  for (var i = 0; i < players.length; i++) {
+    var t = players[i];
+    if (t.team !== p.team || t === p || t.isGK) continue;
+    var dx = t.x - p.x, dy = t.y - p.y, d = vlen(dx, dy);
+    if (d < 60 || d > 420) continue;
+    var dot = (dx / d) * p.face.x + (dy / d) * p.face.y;
+    var th = nearestEnemyOf(t);
+    if (dot > bestDot && (!th.p || th.d > 40)) { bestDot = dot; best = t; }
+  }
+  if (best) {
+    // 传球 = 瞄准队友"这一瞬"的位置直线传出，之后双方怎么动都不改轨迹
+    kickToward(p, best.x, best.y, 350);
+    preferCtrl = best; preferT = 0.9;          // 锁定接球人，传球路上就能接管
+  } else {
+    kickToward(p, postForShot(p), g.y, 660);   // 朝门柱内侧打，别总踢中路喂门将
+    preferCtrl = null; preferT = 0;            // 射门不锁人
+  }
+}
+// 射门目标：顺着你面朝方向打近/远角；直直冲门时自动打门将另一侧空角
+function postForShot(p) {
+  var want = p.face.x;
+  var gk = gkOf(p.team === 0 ? 1 : 0);          // 对方门将
+  if (Math.abs(want) < 0.15) {
+    if (!gk) want = 0;
+    else if (Math.abs(gk.x - CX) < 24) want = Math.random() < 0.5 ? -1 : 1;
+    else want = gk.x > CX ? -1 : 1;             // 打门将不在的那一侧
+  }
+  return clamp(CX + want * (GOAL_HALF - 18), CX - GOAL_HALF + 12, CX + GOAL_HALF - 12);
+}
+
+// ---------- 门将 AI（站门 / 扑救在 stepBall 里做 / 拿球后开球分边） ----------
+function catchSfx() { snd('sine', 0.13, 150, 90, 0.06); }
+function aiKeeper(p, dt) {
+  var box = boxOf(p.team);
+  var g = enemyGoalOf(p.team);
+
+  // 门将拿住球：停一拍，然后分给空位队友；没空位就大脚开出去
+  if (ball.owner === p) {
+    if (p.gkHold < 0.45) { p.gkHold += dt; aiSteer(p, p.x, p.y, 40, dt); return; }
+    p.gkHold = 0;
+    var t = outletTeammate(p);
+    if (t) kickToward(p, t.x + t.vx * 0.2, t.y + t.vy * 0.2, 480);
+    else   kickToward(p, g.x, g.y, 640);
+    return;
+  }
+  p.gkHold = 0;
+
+  // 站位：横移贴球的横向落点；球离门越远，门将往前压一点、缩小射门角度
+  var tx = clamp(ball.x, box.x0 + 18, box.x1 - 18);
+  var distLine = Math.abs(ball.y - box.gy);
+  var front = clamp((distLine - 130) / ((BY - TY) * 0.8), 0, 1);
+  var off = 18 + front * (BOX_DEPTH - 34);
+  var ty = box.gy + box.s * off;
+  aiSteer(p, tx, ty, 105 * GK_SPEED_F, dt);      // 门将慢：×0.75
+  var fx = ball.x - p.x, fy = ball.y - p.y, fm = vlen(fx, fy) || 1;
+  p.face.x = fx / fm; p.face.y = fy / fm;
+}
+// 门将把球分给谁：空位更大、更靠前、离防守球员更远的场上队友
+function outletTeammate(gk) {
+  var g = enemyGoalOf(gk.team);
+  var best = null, bestScore = -1e9;
+  for (var i = 0; i < players.length; i++) {
+    var t = players[i];
+    if (t.team !== gk.team || t === gk || t.isGK) continue;
+    var th = nearestEnemyOf(t);
+    var t2g = vlen(g.x - t.x, g.y - t.y);
+    var open = th.p ? th.d : 999;
+    var score = (open > 55 ? 110 : open - 80) - t2g * 0.2;
+    if (score > bestScore) { bestScore = score; best = t; }
+  }
+  return best;
+}
+// 这球门将能不能扑住：球在自己禁区、正朝自己门飞、又够得着
+function keeperCanCatch() {
+  if (ball.owner) return null;
+  var sp = vlen(ball.vx, ball.vy);
+  if (sp < 120) return null;                      // 慢球走正常"谁近谁拿"
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    if (!p.isGK) continue;
+    var box = boxOf(p.team);
+    if (ball.x < box.x0 || ball.x > box.x1) continue;
+    if (ball.y < box.loY || ball.y > box.hiY) continue;
+    var towardGoal = p.team === 0 ? ball.vy > 60 : ball.vy < -60;
+    if (!towardGoal) continue;
+    var reach = p.r + ball.r + GK_REACH;
+    if (dist2(p.x, p.y, ball.x, ball.y) < reach * reach) return p;
+  }
+  return null;
+}
+
+// ---------- 球 ----------
+function stepBall(dt) {
+  var b = ball;
+  b.free = Math.max(0, b.free - dt);          // 保护期计时（无论球是否有人拿）
+  if (b.owner) {
+    // 带球：球黏在脚前
+    var o = b.owner;
+    var dx = o.face.x, dy = o.face.y, m = vlen(dx, dy);
+    if (m < 0.1) { dx = 0; dy = o.team === 0 ? -1 : 1; } else { dx /= m; dy /= m; }
+    b.x = o.x + dx * (o.r + b.r + 2);
+    b.y = o.y + dy * (o.r + b.r + 2);
+    b.vx = o.vx; b.vy = o.vy;
+    return;
+  }
+  // 自由球：只受摩擦和边界影响，方向不再被人改
+  var damp = Math.exp(-dt * 1.4);
+  b.vx *= damp; b.vy *= damp;
+  if (Math.abs(b.vx) < 5) b.vx = 0;
+  if (Math.abs(b.vy) < 5) b.vy = 0;
+  b.x += b.vx * dt; b.y += b.vy * dt;
+
+  // 门将扑救优先于进球判定：够得着就抱住，之后自动分给队友
+  var gkSave = keeperCanCatch();
+  if (gkSave) {
+    ball.owner = gkSave; ball.vx = ball.vy = 0;
+    ball.free = 0.5;                             // 扑住保护期，防原地被捅走
+    lastKickTeam = gkSave.team;
+    gkSave.gkHold = 0;
+    var gyUp = gkSave.team === 0 ? TY : BY;
+    var fdx = CX - gkSave.x, fdy = gyUp - gkSave.y, fm2 = vlen(fdx, fdy) || 1;
+    gkSave.face.x = fdx / fm2; gkSave.face.y = fdy / fm2;   // 面朝对方半场，准备开球
+    catchSfx();
+    return;
+  }
+
+  var sp = vlen(b.vx, b.vy);
+  // 上边（AI 守的门 = 玩家攻的门）
+  if (b.y - b.r < TY) {
+    if (Math.abs(b.x - CX) < GOAL_HALF) goalFor(0);
+    else { b.y = TY + b.r; b.vy = -b.vy * 0.55; }
+  }
+  if (b.y + b.r > BY) {
+    if (Math.abs(b.x - CX) < GOAL_HALF) goalFor(1);
+    else { b.y = BY - b.r; b.vy = -b.vy * 0.55; }
+  }
+  if (b.x - b.r < LX) { b.x = LX + b.r; b.vx = -b.vx * 0.55; }
+  if (b.x + b.r > RX) { b.x = RX - b.r; b.vx = -b.vx * 0.55; }
+}
+function goalFor(team) {
+  if (state !== 'play') return;
+  scores[team]++;
+  goalFlash = 1.4; goalSide = team;
+  goalSfx();
+  if (scores[team] >= 5) { endMatch(); return; }
+  setupPositions();          // 立刻刷回中圈
+  state = 'kickoff';
+  readyT = 3.0;
+}
+
+// 抢球/接球：决定球被谁拿住或挡下
+function settleBall() {
+  var b = ball;
+  if (b.owner) {
+    // 持球人被对手贴身 → 直接断球，球权归抢断者（有短暂保护，防止原地来回互抢）
+    if (b.free > 0) return;
+    for (var i = 0; i < players.length; i++) {
+      var p = players[i];
+      if (p.team === b.owner.team) continue;
+      var rr = p.r + b.owner.r + 2;            // 要比"人跟人推开"的 30px 大，贴身才算抢断
+      if (dist2(p.x, p.y, b.owner.x, b.owner.y) < rr * rr) {
+        var o = b.owner;
+        var dx = o.x - p.x, dy = o.y - p.y, dm = vlen(dx, dy) || 1;
+        b.owner = p; b.vx = b.vy = 0;
+        b.free = 0.45;                       // 抢断保护期：刚断下的球不会立刻被反抢
+        lastKickTeam = p.team;
+        o.vx = dx / dm * 150; o.vy = dy / dm * 150;   // 被断的人踉跄一下，拉开身位
+        kickSfx();
+        return;
+      }
+    }
+    return;
+  }
+
+  var sp = vlen(b.vx, b.vy);
+  for (var j = 0; j < players.length; j++) {
+    var q = players[j];
+    var reach = q.r + b.r + 2;
+    if (dist2(q.x, q.y, b.x, b.y) > reach * reach) continue;
+
+    if (sp > 150) {
+      // 球滚得快：自己的传球让自家队友接住；对方只能挡掉（弹开），不能吸走
+      if (q.team === lastKickTeam && b.free <= 0) {
+        if (sp < 600) { b.owner = q; b.vx = b.vy = 0; return; }   // 第一脚停球
+        continue;
+      }
+      if (q.team !== lastKickTeam || lastKickTeam < 0) {
+        // 挡：弹向别处
+        var dx2 = q.x - b.x, dy2 = q.y - b.y, dm2 = vlen(dx2, dy2) || 1;
+        b.x = q.x + dx2 / dm2 * reach;
+        b.y = q.y + dy2 / dm2 * reach;
+        b.vx = dx2 / dm2 * Math.max(120, sp * 0.45);
+        b.vy = dy2 / dm2 * Math.max(120, sp * 0.45);
+        b.free = 0.1;
+        lastKickTeam = -1;
+        kickSfx();
+        return;
+      }
+    } else if (b.free <= 0) {
+      // 球慢下来了：谁离得近就能拿
+      b.owner = q; b.vx = b.vy = 0; return;
+    }
+  }
+}
+
+// ---------- 主更新 ----------
+function update(dt) {
+  if (state === 'menu' || state === 'over') return;
+
+  if (state === 'kickoff') {
+    goalFlash = Math.max(0, goalFlash - dt);
+    readyT -= dt;
+    if (readyT <= 0) { state = 'play'; ball.free = 0.3; }
+    return;
+  }
+
+  if (scores[0] >= 5 || scores[1] >= 5) { endMatch(); return; }
+  if (clock <= 0 && scores[0] !== scores[1]) { endMatch(); return; }
+  clock = Math.max(0, clock - dt);
+  goalFlash = Math.max(0, goalFlash - dt);
+
+  // 决定操控对象（丢球=最近的人，持球=带球人，不会乱跳）
+  preferT = Math.max(0, preferT - dt);
+  ctrlAge += dt;
+  var nCtrl = controlledPlayer();
+  if (nCtrl !== ctrl) ctrlAge = 0;
+  ctrl = nCtrl;
+
+  var i, p;
+  for (i = 0; i < players.length; i++) {
+    p = players[i];
+    if (p === ctrl) humanMove(p, dt);
+    else aiThink(p, dt);
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.x = clamp(p.x, LX + p.r, RX - p.r);
+    p.y = clamp(p.y, TY + p.r + 5, BY - p.r - 5);
+    if (p.isGK) {                       // 门将活动范围锁在自己禁区里
+      var box = boxOf(p.team);
+      p.x = clamp(p.x, box.x0 + 6, box.x1 - 6);
+      p.y = clamp(p.y, box.loY + 6, box.hiY - 6);
+    }
+    p.moving = (Math.abs(p.vx) + Math.abs(p.vy)) > 25;
+    if (p.moving) p.bob += dt * 7;              // 速度减半了，摆腿频率也跟上
+    p.blink -= dt; if (p.blink < -0.12) p.blink = 2 + Math.random() * 4;
+  }
+  // 人跟人推开
+  for (i = 0; i < players.length; i++) {
+    for (var j = i + 1; j < players.length; j++) {
+      var a = players[i], c = players[j];
+      var dx = c.x - a.x, dy = c.y - a.y, d2 = dx * dx + dy * dy, minD = a.r + c.r;
+      if (d2 < minD * minD && d2 > 0.01) {
+        var d = Math.sqrt(d2), push = (minD - d) / d * 0.5;
+        a.x -= dx * push; a.y -= dy * push;
+        c.x += dx * push; c.y += dy * push;
+      }
+    }
+  }
+
+  // 格挡/挤碰后把门将再锁回禁区一次，别被推出框
+  for (i = 0; i < players.length; i++) {
+    p = players[i];
+    if (!p.isGK) continue;
+    var bbox = boxOf(p.team);
+    p.x = clamp(p.x, bbox.x0 + 6, bbox.x1 - 6);
+    p.y = clamp(p.y, bbox.loY + 6, bbox.hiY - 6);
+  }
+
+  // 球
+  stepBall(dt);
+  if (state !== 'play') return;
+  settleBall();
+
+  // 空格按下沿：传球 / 射门（门将拿球时交给 AI 自动开球，不占用）
+  var spNow = !!KEYS[' '];
+  if (spNow && !prevSpace && ball.owner && ball.owner.team === pickIdx && !ball.owner.isGK) {
+    humanKick(ball.owner);
+  }
+  prevSpace = spNow;
+}
+
+function endMatch() {
+  winner = scores[0] > scores[1] ? 0 : 1;
+  state = 'over';
+}
+
+// ---------- 绘制 ----------
+function rr(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function drawPitch() {
+  var gr = ctx.createLinearGradient(0, TY, 0, BY);
+  gr.addColorStop(0, '#2e8f5a'); gr.addColorStop(0.5, '#2a8654'); gr.addColorStop(1, '#2a8352');
+  ctx.fillStyle = gr;
+  ctx.fillRect(LX, TY, RX - LX, BY - TY);
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+  for (var y = TY + 40; y < BY; y += 40) {
+    ctx.beginPath(); ctx.moveTo(LX, y); ctx.lineTo(RX, y); ctx.stroke();
+  }
+  ctx.strokeStyle = '#eaf4ee'; ctx.lineWidth = 4;
+  ctx.strokeRect(LX, TY, RX - LX, BY - TY);
+  ctx.beginPath(); ctx.arc(CX, (TY + BY) / 2, 70, 0, 7); ctx.stroke();
+  ctx.beginPath(); ctx.arc(CX, (TY + BY) / 2, 4, 0, 7); ctx.fillStyle = '#eaf4ee'; ctx.fill();
+  // 两个禁区
+  drawBox(boxOf(0));
+  drawBox(boxOf(1));
+  drawGoal(CX - GOAL_HALF, CX + GOAL_HALF, TY, -1);
+  drawGoal(CX - GOAL_HALF, CX + GOAL_HALF, BY, 1);
+}
+function drawBox(b) {
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fillRect(b.x0, b.loY, b.x1 - b.x0, b.hiY - b.loY);
+  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(b.x0, b.loY, b.x1 - b.x0, b.hiY - b.loY);
+}
+function drawGoal(x1, x2, yLine, dir) {
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(x1, yLine); ctx.lineTo(x1, yLine + dir * 16); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x2, yLine); ctx.lineTo(x2, yLine + dir * 16); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x1, yLine + dir * 8); ctx.lineTo(x2, yLine + dir * 8); ctx.stroke();
+  ctx.setLineDash([6, 6]); ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x1, yLine); ctx.lineTo(x2, yLine); ctx.stroke();
+  ctx.setLineDash([]);
+}
+function drawBall() {
+  var b = ball;
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath(); ctx.ellipse(b.x, b.y + b.r * 0.7, b.r * 0.9, b.r * 0.5, 0, 0, 7); ctx.fill();
+  var g = ctx.createRadialGradient(b.x - 3, b.y - 4, 1, b.x, b.y, b.r);
+  g.addColorStop(0, '#ffffff'); g.addColorStop(1, '#e4e9ef');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#2b2b2b'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(b.x - b.r, b.y); ctx.lineTo(b.x + b.r, b.y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(b.x, b.y - b.r); ctx.lineTo(b.x, b.y + b.r); ctx.stroke();
+}
+function drawChibi(p) {
+  var T = TEAMS[p.team];
+  var jersey = p.isGK ? T.gk : T.jersey;       // 门将穿专属色，一眼认出
+  var sx = 1, sy = 1;
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(p.x, p.y + 20, p.isGK ? 17 : 14, 5, 0, 0, 7); ctx.fill();
+  if (Math.abs(p.face.x) > 0.3) { sx = 0.92; sy = 1.05; }
+
+  ctx.save();
+  ctx.translate(p.x, p.y);
+
+  ctx.fillStyle = '#1b222b';
+  ctx.fillRect(-8, 17, 6, 5);
+  ctx.fillRect(2, 17, 6, 5);
+
+  ctx.fillStyle = T.shorts;
+  rr(-9, 10, 18, 9, 3); ctx.fill();
+  ctx.fillStyle = jersey;
+  ctx.beginPath();
+  ctx.ellipse(0, 4, 10, 10, 0, 0, 7); ctx.fill();
+  ctx.save();
+  if (p.isGK) {
+    ctx.fillStyle = T.collar;
+    rr(-10, -3, 20, 6, 3); ctx.fill();         // 门将胸前小护带
+  } else if (p.team === 0) {
+    ctx.fillStyle = T.stripe;
+    ctx.fillRect(-1.6, -4, 3.2, 12);
+  } else {
+    ctx.fillStyle = T.collar;
+    rr(-10, -4, 20, 7, 3.5); ctx.fill();
+    ctx.fillStyle = T.stripe;
+    ctx.fillRect(-1.4, -5, 2.8, 13);
+  }
+  ctx.restore();
+
+  var hr = 13, headY = -14;
+  var skin = ['#f5c69a', '#f0be90'][p.team % 2];
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.arc(0, headY, hr, 0, 7); ctx.fill();
+  ctx.fillStyle = '#3a2b22';
+  ctx.beginPath(); ctx.arc(0, headY - hr * 0.45, hr * 0.72, Math.PI, Math.PI * 2); ctx.fill();
+
+  var lx = p.face.x * 3, ly = p.face.y * 3;
+  var blinkNow = p.blink < 0;
+  ctx.fillStyle = '#1c2530';
+  if (blinkNow) {
+    ctx.lineWidth = 1.6; ctx.strokeStyle = '#1c2530';
+    ctx.beginPath(); ctx.moveTo(-4 + lx, headY - 2 + ly); ctx.lineTo(0 + lx, headY - 2 + ly); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(4 + lx, headY - 2 + ly); ctx.lineTo(8 + lx, headY - 2 + ly); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.arc(-4 + lx, headY - 2 + ly, 2, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(5 + lx, headY - 2 + ly, 2, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,130,130,0.35)';
+    ctx.beginPath(); ctx.arc(-8, headY + 3, 2.4, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(8, headY + 3, 2.4, 0, 7); ctx.fill();
+  }
+  ctx.strokeStyle = '#7a3b2a'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.arc(0, headY + 6, 3.4, 0.15, Math.PI - 0.15); ctx.stroke();
+  if (p.isGK) {                                 // 门将：白色大手套
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(-10, 8, 3.2, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(10, 8, 3.2, 0, 7); ctx.fill();
+  }
+  ctx.restore();
+
+  // 你操控的人：脚下黄色小箭头（不会出现在门将头上）
+  if ((state === 'play' || state === 'kickoff') && p === ctrl && !p.isGK) {
+    ctx.fillStyle = '#ffe14d';
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y + 27); ctx.lineTo(p.x - 6, p.y + 36); ctx.lineTo(p.x + 6, p.y + 36);
+    ctx.closePath(); ctx.fill();
+  }
+}
+function drawHUD() {
+  ctx.fillStyle = 'rgba(10,14,20,0.85)';
+  ctx.fillRect(0, 0, W, 54);
+  var pt = TEAMS[pickIdx], et = TEAMS[pickIdx ^ 1];
+  function chip(t, x, sc, hl) {
+    ctx.fillStyle = hl ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)';
+    rr(x, 8, 150, 38, 8); ctx.fill();
+    ctx.fillStyle = t.jersey;
+    ctx.beginPath(); ctx.arc(x + 22, 27, 12, 0, 7); ctx.fill();
+    ctx.fillStyle = t.stripe; ctx.fillRect(x + 16, 21, 4, 12);
+    ctx.fillStyle = '#e8edf3'; ctx.font = 'bold 17px sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(t.name, x + 40, 27);
+    ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'right'; ctx.fillText(sc, x + 140, 29);
+  }
+  chip(pt, 14, scores[0], true);
+  chip(et, W - 164, scores[1], false);
+  var mm = Math.floor(clock / 60), ss = Math.floor(clock % 60);
+  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText((mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss, CX, 29);
+  if (clock <= 0 && state === 'play') { ctx.fillStyle = '#ff7b5c'; ctx.font = 'bold 13px sans-serif'; ctx.fillText('金球！先进者胜', CX, 48); }
+}
+function drawFlash() {
+  if (goalFlash <= 0 || state === 'menu' || state === 'over') return;
+  var a = Math.min(1, goalFlash);
+  ctx.fillStyle = 'rgba(10,14,20,' + (a * 0.35).toFixed(3) + ')';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 46px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.shadowColor = '#ffe14d'; ctx.shadowBlur = 30;
+  ctx.fillText(goalSide === 0 ? '进球！' : '被进球…', CX, (TY + BY) / 2 - 60);
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillStyle = '#ffe14d';
+  ctx.fillText(TEAMS[goalSide].name + ' ' + scores[goalSide] + ' 球', CX, (TY + BY) / 2);
+  ctx.shadowBlur = 0;
+}
+function drawKickoff() {
+  if (state !== 'kickoff') return;
+  var s = Math.max(1, Math.ceil(readyT));
+  ctx.font = 'bold 90px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 18;
+  ctx.fillText(s, CX, (TY + BY) / 2 + 150);
+  ctx.shadowBlur = 0;
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillStyle = '#ffe14d';
+  ctx.fillText(readyT > 1.2 ? '倒计时开球…' : '开球！', CX, (TY + BY) / 2 + 200);
+}
+function drawMenu() {
+  ctx.fillStyle = '#121821'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
+  ctx.font = 'bold 58px sans-serif'; ctx.fillText('街头萌战', CX, 240);
+  ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
+  ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
+  ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.0', CX, 330);
+
+  var py = 460;
+  for (var i = 0; i < 2; i++) {
+    var t = TEAMS[i], sel = i === pickIdx;
+    var p = { team: i, x: 0, y: 0, face: { x: 0, y: -1 }, bob: 0, moving: true, blink: 2 };
+    ctx.save(); ctx.translate(CX - (sel ? 120 : 96), py - 30); ctx.scale(1.9, 1.9);
+    drawChibiPreview(p); ctx.restore();
+    ctx.font = sel ? 'bold 26px sans-serif' : '22px sans-serif';
+    ctx.fillStyle = sel ? '#ffe14d' : '#aab6c4';
+    ctx.fillText(t.name + '  ·  ' + (i === 0 ? '你控蓝白军' : '你控红军'), CX + 6, py - 30 + 40);
+    ctx.font = '14px sans-serif'; ctx.fillStyle = '#7c8b9d';
+    ctx.fillText(i === 0 ? '主色 白×天蓝' : '主色 深红×海军蓝肩', CX + 6, py + 60);
+    py += 190;
+  }
+  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
+  ctx.fillText('按 A / S 选队 · Enter 开球', CX, py + 40);
+  ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
+  ctx.fillText('方向键/WASD 跑动 · 空格 传球/射门（带左右方向=打角度骗门将）', CX, py + 75);
+  ctx.fillText('门将 AI 自动站位扑救，接稳后会开球分给队友 · 贴身=断球夺权', CX, py + 98);
+}
+function drawChibiPreview(p) {
+  var T = TEAMS[p.team];
+  ctx.fillStyle = T.shorts; rr(-9, 10, 18, 9, 3); ctx.fill();
+  ctx.fillStyle = T.jersey; ctx.beginPath(); ctx.ellipse(0, 4, 10, 10, 0, 0, 7); ctx.fill();
+  if (p.team === 0) { ctx.fillStyle = T.stripe; ctx.fillRect(-1.6, -4, 3.2, 12); }
+  else { ctx.fillStyle = T.collar; rr(-10, -4, 20, 7, 3.5); ctx.fill(); ctx.fillStyle = T.stripe; ctx.fillRect(-1.4, -5, 2.8, 13); }
+  var skin = ['#f5c69a', '#f0be90'][p.team % 2];
+  ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(0, -14, 13, 0, 7); ctx.fill();
+  ctx.fillStyle = '#3a2b22'; ctx.beginPath(); ctx.arc(0, -19.8, 9.4, Math.PI, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#1c2530';
+  ctx.beginPath(); ctx.arc(-4, -16, 2, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(5, -16, 2, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#7a3b2a'; ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.arc(0, -9, 3, 0.15, Math.PI - 0.15); ctx.stroke();
+}
+function drawOver() {
+  ctx.fillStyle = 'rgba(10,14,20,0.8)'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  var you = winner === pickIdx;
+  ctx.fillStyle = you ? '#ffe14d' : '#7c8b9d';
+  ctx.font = 'bold 30px sans-serif';
+  ctx.fillText(you ? '🎉 你赢了！' : '对手赢了…', CX, 420);
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 56px sans-serif';
+  ctx.fillText(scores[0] + ' : ' + scores[1], CX, 500);
+  ctx.fillStyle = '#9fb0c2'; ctx.font = '18px sans-serif';
+  ctx.fillText('按 Space / Enter 回主菜单', CX, 600);
+}
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  if (state === 'menu') { drawMenu(); return; }
+  drawPitch();
+  var list = players.slice().sort(function (a, b) { return a.y - b.y; });
+  for (var i = 0; i < list.length; i++) drawChibi(list[i]);
+  drawBall();
+  drawHUD();
+  if (state === 'play' || state === 'kickoff') drawFlash();
+  if (state === 'kickoff') drawKickoff();
+  if (state === 'over') drawOver();
+}
+
+// ---------- 主循环 ----------
+var last = performance.now();
+function loop(t) {
+  var dt = Math.min(0.033, (t - last) / 1000);
+  last = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
