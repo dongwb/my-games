@@ -18,11 +18,12 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.0.1
+   街头萌战 STREET CUP · v1.0.2
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
    ——— 首个正式发布版 v1.0.0 ———
    v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
           门将抱球后先观察线路再分球，没空位才大脚解围
+   v1.0.2：队友前插跑位——我方持球时斜插前方侧翼空当，直塞有人接
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -335,41 +336,30 @@ function aiThink(p, dt) {
   }
 }
 
-// 无球队员：绕着持球队友摆"小三角"，永远有传球角度，且不飞远
+// 无球队员：我方持球时主动前插——斜插到持球人前方侧翼的空当，给直塞留线路
 function supportRun(p, c, dt) {
   var g = enemyGoalOf(p.team);
   var fx = g.x - c.x, fy = g.y - c.y, fl = vlen(fx, fy) || 1;
-  var fwdX = fx / fl, fwdY = fy / fl;
-  var rX = -fwdY, rY = fwdX;                     // 进攻方向右侧单位向量
+  var fwdX = fx / fl, fwdY = fy / fl;            // 进攻方向（指向对方球门）
+  var rX = -fwdY, rY = fwdX;                     // 进攻方向的右侧
 
-  // 谁是"近接应"谁靠后短传，谁"远"谁前插 —— 由到持球人距离定
-  var other = null;
-  for (var i = 0; i < players.length; i++) {
-    if (players[i].team === p.team && players[i] !== p && players[i] !== c && !players[i].isGK) other = players[i];
-  }
-  var amI = vlen(p.x - c.x, p.y - c.y);
-  var om = other ? vlen(other.x - c.x, other.y - c.y) : 1e9;
-  var rel = (p.x - c.x) * rX + (p.y - c.y) * rY; // 在右侧方向的分量定左右
-  var side = rel > 0 ? 1 : -1;
-  if (rel === 0) side = p.x >= c.x ? 1 : -1;
-
-  var tx, ty;
-  if (amI <= om) {
-    // 近端：在持球人斜后方，做安全短传点
-    tx = c.x + rX * side * 85 - fwdX * 25;
-    ty = c.y + rY * side * 85 - fwdY * 25;
-  } else {
-    // 远端：前插到前方另一侧，接直塞
-    tx = c.x + rX * (-side) * 85 + fwdX * 120;
-    ty = c.y + rY * (-side) * 85 + fwdY * 120;
-  }
-  // 都别离开持球人太远（控住队形），也别撞到敌人
+  // 固定走自己槽位那一侧（slot0 左路、slot2 右路），不来回换边
+  var side = p.slot === 0 ? -1 : 1;
+  // 身边有盯防就把跑道拉得更宽，绕开防守人
   var th = nearestEnemyOf(p);
-  if (th.p && th.d < 42) { tx = c.x + (tx - c.x) * 0.35; ty = c.y + (ty - c.y) * 0.35; }
+  var width = th.p && th.d < 55 ? 150 : 110;
+
+  // 目标点：持球人前方 150px、侧翼 width px——直塞球最喜欢的位置
+  var tx = c.x + fwdX * 150 + rX * side * width;
+  var ty = c.y + fwdY * 150 + rY * side * width;
+  // 别冲过头：离对方门线至少留 70px，免得球还没到人就出界了
+  if (p.team === 0) ty = Math.max(ty, TY + 70);
+  else              ty = Math.min(ty, BY - 70);
+
   aiSteer(p,
     clamp(tx, LX + 25, RX - 25),
     clamp(ty, TY + 25, BY - 25),
-    102, dt);
+    115, dt);                                    // 前插要比普通跑位更积极一点
 }
 
 // 防守站位：两个退防队员一左一右守住"球—本方球门"连线
@@ -904,7 +894,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.1', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.2', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
