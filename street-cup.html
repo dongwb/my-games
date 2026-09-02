@@ -18,7 +18,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.0.6
+   街头萌战 STREET CUP · v1.0.7
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
    ——— 首个正式发布版 v1.0.0 ———
    v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
@@ -28,6 +28,7 @@
    v1.0.4：门将速度 = 球员速度 × 0.75（直接套公式，不再单独压慢）
    v1.0.5：门将再提速至 ×0.85 / 门将抱球时对方必须退出禁区才开球
    v1.0.6：速度回 ×0.75；修站位——门将永远守球门中央（只随球路小幅偏移）
+   v1.0.7：画上中线（开球线）
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -765,6 +766,8 @@ function drawPitch() {
   }
   ctx.strokeStyle = '#eaf4ee'; ctx.lineWidth = 4;
   ctx.strokeRect(LX, TY, RX - LX, BY - TY);
+  // 中线（开球线）：横穿球场中央
+  ctx.beginPath(); ctx.moveTo(LX, (TY + BY) / 2); ctx.lineTo(RX, (TY + BY) / 2); ctx.stroke();
   ctx.beginPath(); ctx.arc(CX, (TY + BY) / 2, 70, 0, 7); ctx.stroke();
   ctx.beginPath(); ctx.arc(CX, (TY + BY) / 2, 4, 0, 7); ctx.fillStyle = '#eaf4ee'; ctx.fill();
   // 两个禁区
@@ -944,7 +947,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.6', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.7', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
