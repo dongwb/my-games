@@ -18,12 +18,13 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.0.2
+   街头萌战 STREET CUP · v1.0.3
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
    ——— 首个正式发布版 v1.0.0 ———
    v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
           门将抱球后先观察线路再分球，没空位才大脚解围
    v1.0.2：队友前插跑位——我方持球时斜插前方侧翼空当，直塞有人接
+   v1.0.3：抢断改成"碰到球才算"（碰人不算）/ 小人加手臂木棍+球袜球鞋迈步
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -574,13 +575,13 @@ function goalFor(team) {
 function settleBall() {
   var b = ball;
   if (b.owner) {
-    // 持球人被对手贴身 → 直接断球，球权归抢断者（有短暂保护，防止原地来回互抢）
+    // 对手碰到"球"才算抢断（碰人不算），球权归抢断者（有短暂保护防互抢）
     if (b.free > 0) return;
     for (var i = 0; i < players.length; i++) {
       var p = players[i];
       if (p.team === b.owner.team) continue;
-      var rr = p.r + b.owner.r + 2;            // 要比"人跟人推开"的 30px 大，贴身才算抢断
-      if (dist2(p.x, p.y, b.owner.x, b.owner.y) < rr * rr) {
+      var rr = p.r + b.r + 2;                  // 脚够到球才算断球
+      if (dist2(p.x, p.y, b.x, b.y) < rr * rr) {
         var o = b.owner;
         var dx = o.x - p.x, dy = o.y - p.y, dm = vlen(dx, dy) || 1;
         b.owner = p; b.vx = b.vy = 0;
@@ -775,9 +776,22 @@ function drawChibi(p) {
   ctx.save();
   ctx.translate(p.x, p.y);
 
+  // 摆动相位：跑动时手脚交替摆动
+  var sw = p.moving ? Math.sin(p.bob) * 3 : 0;
+  var skin = ['#f5c69a', '#f0be90'][p.team % 2];
+
+  // 手臂：两根小木棍，从肩膀伸出来，跑动时前后摆
+  ctx.strokeStyle = skin; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-9, 1); ctx.lineTo(-14, 9 + sw); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(9, 1);  ctx.lineTo(14, 9 - sw);  ctx.stroke();
+
+  // 小腿：球袜 + 深色球鞋，跑动时交替迈步
+  ctx.fillStyle = T.socks;
+  ctx.fillRect(-8 + sw * 0.7, 15, 6, 6);
+  ctx.fillRect(2 - sw * 0.7, 15, 6, 6);
   ctx.fillStyle = '#1b222b';
-  ctx.fillRect(-8, 17, 6, 5);
-  ctx.fillRect(2, 17, 6, 5);
+  ctx.fillRect(-9 + sw * 0.7, 20, 7, 4);
+  ctx.fillRect(2 - sw * 0.7, 20, 7, 4);
 
   ctx.fillStyle = T.shorts;
   rr(-9, 10, 18, 9, 3); ctx.fill();
@@ -800,7 +814,6 @@ function drawChibi(p) {
   ctx.restore();
 
   var hr = 13, headY = -14;
-  var skin = ['#f5c69a', '#f0be90'][p.team % 2];
   ctx.fillStyle = skin;
   ctx.beginPath(); ctx.arc(0, headY, hr, 0, 7); ctx.fill();
   ctx.fillStyle = '#3a2b22';
@@ -822,10 +835,10 @@ function drawChibi(p) {
   }
   ctx.strokeStyle = '#7a3b2a'; ctx.lineWidth = 1.4;
   ctx.beginPath(); ctx.arc(0, headY + 6, 3.4, 0.15, Math.PI - 0.15); ctx.stroke();
-  if (p.isGK) {                                 // 门将：白色大手套
+  if (p.isGK) {                                 // 门将：白手套长在手臂末端
     ctx.fillStyle = '#ffffff';
-    ctx.beginPath(); ctx.arc(-10, 8, 3.2, 0, 7); ctx.fill();
-    ctx.beginPath(); ctx.arc(10, 8, 3.2, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(-14, 9 + sw, 3.4, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(14, 9 - sw, 3.4, 0, 7); ctx.fill();
   }
   ctx.restore();
 
@@ -894,7 +907,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.2', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.0.3', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
