@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.5.4
+   街头萌战 2 STREET CUP 2 · v2.6.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -39,6 +39,8 @@
    v2.5.3：传球键 V→C；修开局"假传"——第二轮找人不限方向（可回传）
    v2.5.4：传球去智能化——不再换目标，永远朝队友传（优先面朝方向，
           兜底传最近的），修"直接传给对面"
+   v2.6.0：门将脱手——红区射门 70~90% 扑球 50% 脱手，蓄满 100% 射正必脱手，
+          脱手球物理滑落成无主球，双方拼抢
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -498,6 +500,7 @@ function kickToward(p, tx, ty, sp, kind) {
   var fx = dx / m, fy = dy / m;
   ball.vx = fx * sp; ball.vy = fy * sp;
   ball.owner = null; ball.free = 0.14;
+  ball.shotCharge = kind === 'shot' ? 0.5 : -1;   // 射门力度（脱手判定用）
   lastKickTeam = p.team;
   if (stats) { if (kind === 'shot') stats[p.team].shot++; else stats[p.team].pass++; }
   p.face.x = fx; p.face.y = fy;
@@ -701,6 +704,7 @@ function humanShoot(p, ch) {
     sp = 760;
   }
   kickToward(p, aimX, g.y, sp, 'shot');
+  ball.shotCharge = ch;              // 人类射门：带真实蓄力值
   preferCtrl = null; preferT = 0;
 }
 
@@ -744,7 +748,24 @@ function stepBall(dt) {
   // 门将扑救优先于进球判定：够得着就抱住，之后自动分给队友
   var gkSave = keeperCanCatch();
   if (gkSave) {
+    // 脱手：红区射门 70~90% 有 50% 概率脱手；蓄满 100% 射正必脱手
+    var ch2 = ball.shotCharge >= 0 ? ball.shotCharge : 0.5;
+    var fumble = ch2 >= 1 ? true : (ch2 >= 0.7 && Math.random() < 0.5);
+    if (fumble) {
+      var s3 = gkSave.team === 0 ? -1 : 1;                 // 滑向场内的方向
+      ball.owner = null;
+      ball.x = gkSave.x + gkSave.face.x * 18;              // 从手上滑落一点点
+      ball.y = gkSave.y + s3 * 22;
+      ball.vx = gkSave.face.x * 90 + (Math.random() - 0.5) * 90;
+      ball.vy = s3 * 110;                                   // 变成无主球，双方拼抢
+      ball.free = 0.25;                                     // 短暂滑行后谁都能抢
+      ball.shotCharge = -1;
+      lastKickTeam = -1;
+      kickSfx();
+      return;
+    }
     ball.owner = gkSave; ball.vx = ball.vy = 0;
+    ball.shotCharge = -1;                        // 干净抱住，清掉力度标记
     ball.free = 0.5;                             // 扑住保护期，防原地被捅走
     lastKickTeam = gkSave.team;
     gkSave.gkHold = 0;
@@ -1182,7 +1203,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.5.4', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.6.0', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
