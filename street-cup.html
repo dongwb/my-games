@@ -18,7 +18,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.1.0
+   街头萌战 STREET CUP · v1.1.1
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
    ——— 首个正式发布版 v1.0.0 ———
    v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
@@ -29,8 +29,9 @@
    v1.0.5：门将再提速至 ×0.85 / 门将抱球时对方必须退出禁区才开球
    v1.0.6：速度回 ×0.75；修站位——门将永远守球门中央（只随球路小幅偏移）
    v1.0.7：画上中线（开球线）
-   v1.1.0：射门蓄力——过半场按住空格蓄力 1.5s：松开出脚；
+   v1.1.0：射门蓄力——过半场按住空格蓄力 1s：松开出脚；
           <35% 软弱无力 / 正常范围原速 / 蓄满自动射但会偏
+   v1.1.1：蓄力时间 1.5s → 1s（原地蓄力太容易，节奏加快）
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -71,7 +72,7 @@ var preferCtrl = null;         // 传球瞬间锁定的接球人（短暂优先�
 var preferT = 0;               // preferCtrl 的有效倒计时
 var prevSpace = false;         // 空格按下沿检测
 var charging = false;          // 正在蓄力射门
-var charge = 0;                // 蓄力进度 0~1（1.5 秒蓄满）
+var charge = 0;                // 蓄力进度 0~1（1 秒蓄满）
 var lastKickTeam = -1;         // 球最后是被哪一队踢的（传球/射门归属）
 
 // ---------- 按键 ----------
@@ -770,7 +771,7 @@ function update(dt) {
   var spNow = !!KEYS[' '];
   var ow = ball.owner;
   if (charging) {
-    charge = Math.min(1, charge + dt / 1.5);
+    charge = Math.min(1, charge + dt / 1.0);   // 1 秒蓄满
     if (!(ow && ow.team === pickIdx && !ow.isGK)) {
       charging = false; charge = 0;              // 球被断了，蓄力作废
     } else if (!spNow) {
@@ -1007,7 +1008,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.1.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.1.1', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
