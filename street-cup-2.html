@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.10.0
+   街头萌战 2 STREET CUP 2 · v2.10.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -49,7 +49,8 @@
           红区偏移角收敛——满力脱手战术可控了
    v2.8.2：红区偏角调回 ±11°（可操控后满力不能几乎必进）
    ——— 里程碑版本 v2.9.0：射门系统定稿（自由瞄准+三档蓄力+脱手） ———
-   v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡)，
+   v2.10.1：修赛后统计表消失——stats 按下场两侧索引，别用球衣索引
+   v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
 
@@ -1263,7 +1264,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 276);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v2.10.0', CX, 310);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v2.10.1', CX, 310);
 
   var t = TEAMS[pickIdx], s = SOUL[pickIdx];
   var p = { team: 0, isGK: false, x: 0, y: 0, face: { x: 0, y: -1 }, bob: 0, moving: true, blink: 2 };
@@ -1312,15 +1313,16 @@ function drawOver() {
   ctx.fillText(scores[0] + ' : ' + scores[1], CX, 375);
 
   // —— 全场数据统计表（左列=你，右列=AI） ——
-  var t0 = pickIdx, t1 = oppIdx;
-  var pt = stats[t0].poss + stats[t1].poss || 1;
-  var poss0 = Math.round(stats[t0].poss / pt * 100);
+  var t0 = pickIdx, t1 = oppIdx;              // 球衣索引（队名/颜色用）
+  var s0 = stats[0], s1 = stats[1];             // 统计按下场两侧（0=你，1=AI）
+  var pt = s0.poss + s1.poss || 1;
+  var poss0 = Math.round(s0.poss / pt * 100);
   var rows = [
-    ['比分',     '' + scores[0],           '' + scores[1]],
-    ['控球率',   poss0 + '%',              (100 - poss0) + '%'],
-    ['传球',     '' + stats[t0].pass,      '' + stats[t1].pass],
-    ['射门',     '' + stats[t0].shot,      '' + stats[t1].shot],
-    ['门将扑救', '' + stats[t0].save,      '' + stats[t1].save]
+    ['比分',     '' + scores[0],  '' + scores[1]],
+    ['控球率',   poss0 + '%',     (100 - poss0) + '%'],
+    ['传球',     '' + s0.pass,    '' + s1.pass],
+    ['射门',     '' + s0.shot,    '' + s1.shot],
+    ['门将扑救', '' + s0.save,    '' + s1.save]
   ];
   var xL = CX - 200, xR = CX + 200, y = 465;
   ctx.font = 'bold 24px sans-serif';
