@@ -15,11 +15,11 @@
 <body>
 <div id="wrap">
   <canvas id="cv" width="1080" height="1440"></canvas>
-  <div id="hint">5v5 · 主菜单：<b>A/D</b> 换队 · <b>Enter</b> 开球（对手随机） &nbsp;|&nbsp; 比赛中：<b>方向键/WASD</b> 跑动 · <b>空格</b> 蓄力射门 · <b>C</b> 蓄力传球</div>
+  <div id="hint">5v5 · 主菜单：<b>↑/↓</b> 切设置 · <b>A/D</b> 调整（你的队/对手可指定可随机）· <b>Enter</b> 开球 &nbsp;|&nbsp; 比赛中：<b>方向键/WASD</b> 跑动 · <b>空格</b> 蓄力射门 · <b>C</b> 蓄力传球</div>
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.10.1
+   街头萌战 2 STREET CUP 2 · v2.11.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -50,6 +50,7 @@
    v2.8.2：红区偏角调回 ±11°（可操控后满力不能几乎必进）
    ——— 里程碑版本 v2.9.0：射门系统定稿（自由瞄准+三档蓄力+脱手） ———
    v2.10.1：修赛后统计表消失——stats 按下场两侧索引，别用球衣索引
+   v2.11.0：菜单加"对手"设置（指定/随机）+ 开球权随机猜边
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -97,7 +98,9 @@ function soulOf(side) { return SOUL[kitIndexOf(side)]; }
 // ---------- 状态 ----------
 var state = 'menu';            // menu | kickoff | play | over
 var pickIdx = 0;               // 玩家选择的队伍（球衣/队魂索引）
-var oppIdx = 1;                // AI 对手的队伍（开球时随机，≠ pickIdx）
+var oppIdx = 1;                // AI 对手的队伍（本局的实际对手）
+var oppSel = -1;               // 菜单里选的对手：-1=随机，否则指定
+var menuRow = 0;               // 菜单当前设置行：0=你的队，1=对手
 var players = [], ball = null;
 var scores = [0, 0];           // [玩家队, AI队]
 var clock = 120, goalFlash = 0, goalSide = -1, goalTeam = -1, readyT = 0;
@@ -124,14 +127,28 @@ addEventListener('keydown', function (e) {
   if (e.repeat) return;
   KEYS[k] = true;
   if (state === 'menu') {
-    if (k === 'a' || k === 'arrowleft')  pickIdx = (pickIdx + TEAMS.length - 1) % TEAMS.length;
-    if (k === 'd' || k === 'arrowright') pickIdx = (pickIdx + 1) % TEAMS.length;
+    if (k === 'w' || k === 's' || k === 'arrowup' || k === 'arrowdown') menuRow = 1 - menuRow;
+    if (k === 'a' || k === 'arrowleft')  menuMove(-1);
+    if (k === 'd' || k === 'arrowright') menuMove(1);
     if (k === 'enter') { snd('whistle', 0.18, 1.0); startMatch(); }
   } else if (state === 'over') {
     if (k === ' ' || k === 'enter') { state = 'menu'; scores = [0, 0]; }
   }
 });
 addEventListener('keyup', function (e) { KEYS[e.key.toLowerCase()] = false; });
+// 菜单调值：第 0 行换你的队（撞队则对手回随机）；第 1 行换对手（-1=随机，不许撞队）
+function menuMove(dir) {
+  if (menuRow === 0) {
+    pickIdx = (pickIdx + TEAMS.length + dir) % TEAMS.length;
+    if (oppSel === pickIdx) oppSel = -1;
+  } else {
+    do {
+      oppSel += dir;
+      if (oppSel < -1) oppSel = TEAMS.length - 1;
+      if (oppSel >= TEAMS.length) oppSel = -1;
+    } while (oppSel === pickIdx);
+  }
+}
 
 // ---------- 音效 ----------
 var AC = null;
@@ -188,7 +205,8 @@ function newStats() { return [{ pass: 0, shot: 0, save: 0, poss: 0 }, { pass: 0,
 function startMatch() {
   scores = [0, 0]; clock = 120; winner = null; lastKickTeam = -1;
   stats = newStats();
-  do { oppIdx = Math.floor(Math.random() * TEAMS.length); } while (oppIdx === pickIdx);
+  if (oppSel >= 0) oppIdx = oppSel;
+  else do { oppIdx = Math.floor(Math.random() * TEAMS.length); } while (oppIdx === pickIdx);
   chaserOf = [null, null]; ctrlAge = 99;
   players = [];
   ball = { x: CX, y: (TY + BY) / 2, vx: 0, vy: 0, r: 9, owner: null, free: 0 };
@@ -196,11 +214,11 @@ function startMatch() {
     players.push(mkPlayer(0, s));               // 玩家队，守下方门
     players.push(mkPlayer(1, s));               // AI 队，守上方门
   }
-  setupPositions();
+  setupPositions(Math.floor(Math.random() * 2));   // 开球权随机
   state = 'kickoff'; readyT = 1.2; goalFlash = 0;
 }
 // 中圈开球站位
-function setupPositions() {
+function setupPositions(kickTeam) {
   ball.x = CX; ball.y = (TY + BY) / 2; ball.vx = ball.vy = 0; ball.owner = null; ball.free = 0;
   lastKickTeam = -1;
   preferCtrl = null; preferT = 0;
@@ -224,6 +242,18 @@ function setupPositions() {
     p.face.x = 0; p.face.y = p.team === 0 ? -1 : 1;
     // 倒计时阶段把箭头交给玩家队左前锋，开球即冲刺
     if (p.team === 0 && !p.isGK && p.slot === 3) ctrl = p;
+  }
+  // 开球权（随机一方）：该队左前锋站到球点，球在脚下
+  if (kickTeam === 0 || kickTeam === 1) {
+    for (var k = 0; k < players.length; k++) {
+      var kp = players[k];
+      if (kp.team === kickTeam && kp.slot === 3) {
+        kp.x = CX; kp.y = ball.y + (kickTeam === 0 ? 26 : -26);
+        kp.face.x = 0; kp.face.y = kickTeam === 0 ? -1 : 1;
+        ball.owner = kp;
+        ball.x = kp.x; ball.y = kp.y + kp.face.y * (kp.r + ball.r + 2);
+      }
+    }
   }
 }
 
@@ -835,7 +865,7 @@ function goalFor(team) {                     // team = 进球的队伍编号（0
   goalFlash = 1.4; goalSide = idx; goalTeam = team;
   goalSfx();
   if (scores[idx] >= 5) { endMatch(); return; }
-  setupPositions();          // 立刻刷回中圈
+  setupPositions(Math.floor(Math.random() * 2));   // 进球后开球权也随机
   state = 'kickoff';
   readyT = 3.0;
 }
@@ -1260,35 +1290,49 @@ function drawKickoff() {
 function drawMenu() {
   ctx.fillStyle = '#121821'; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
-  ctx.font = 'bold 58px sans-serif'; ctx.fillText('街头萌战 2', CX, 220);
+  ctx.font = 'bold 58px sans-serif'; ctx.fillText('街头萌战 2', CX, 190);
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
-  ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 276);
+  ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v2.10.1', CX, 310);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v2.11.0', CX, 280);
 
-  var t = TEAMS[pickIdx], s = SOUL[pickIdx];
+  // —— 第 0 行：你的队 ——
+  var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = act0 ? '#ffe14d' : '#7c8b9d';
+  ctx.fillText('你的队' + (act0 ? '   ◀   ▶' : ''), CX, 440);
   var p = { team: 0, isGK: false, x: 0, y: 0, face: { x: 0, y: -1 }, bob: 0, moving: true, blink: 2 };
-  ctx.save(); ctx.translate(CX - 140, 590); ctx.scale(2.4, 2.4);
+  ctx.save(); ctx.translate(CX - 140, 570); ctx.scale(2.2, 2.2);
   drawChibiPreview(p, pickIdx); ctx.restore();
   ctx.textAlign = 'left';
-  ctx.font = 'bold 32px sans-serif'; ctx.fillStyle = '#ffe14d';
-  ctx.fillText(t.name, CX + 20, 565);
-  ctx.font = '18px sans-serif'; ctx.fillStyle = '#aab6c4';
-  ctx.fillText('队魂：' + s.label, CX + 20, 600);
+  ctx.font = 'bold 30px sans-serif';
+  ctx.fillStyle = act0 ? '#ffe14d' : '#c8d3de';
+  ctx.fillText(t.name, CX + 10, 545);
+  ctx.font = '17px sans-serif'; ctx.fillStyle = '#aab6c4';
+  ctx.fillText('队魂：' + s.label, CX + 10, 578);
   ctx.fillStyle = '#7c8b9d';
-  ctx.fillText(t.desc, CX + 20, 628);
+  ctx.fillText(t.desc, CX + 10, 604);
   ctx.textAlign = 'center';
-
-  // 五队选择点
   for (var i = 0; i < TEAMS.length; i++) {
     ctx.fillStyle = i === pickIdx ? '#ffe14d' : 'rgba(255,255,255,0.25)';
-    ctx.beginPath(); ctx.arc(CX - 60 + i * 30, 720, i === pickIdx ? 8 : 5, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(CX - 60 + i * 30, 670, i === pickIdx ? 7 : 4.5, 0, 7); ctx.fill();
   }
 
-  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
-  ctx.fillText('A / D 或 ← / → 换队 · Enter 开球（对手随机）', CX, 790);
+  // —— 第 1 行：对手（可指定/可随机） ——
+  var act1 = menuRow === 1;
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillStyle = act1 ? '#ffe14d' : '#7c8b9d';
+  ctx.fillText('对手' + (act1 ? '   ◀   ▶' : ''), CX, 745);
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillStyle = act1 ? '#ffffff' : '#c8d3de';
+  ctx.fillText(oppSel < 0 ? '🎲 随机（每局抽签）' : TEAMS[oppSel].name, CX, 785);
+
+  ctx.fillStyle = '#8fa0b3'; ctx.font = '15px sans-serif';
+  ctx.fillText('开球权随机：每场猜边，看谁先把球开出', CX, 832);
+  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 20px sans-serif';
+  ctx.fillText('↑/↓ 切换设置 · A/D 或 ←/→ 调整 · Enter 开球', CX, 880);
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
-  ctx.fillText('方向键/WASD 跑动 · C 蓄力传球 · 空格蓄力射门（蓄力时 ←/→ 瞄准）', CX, 825);
+  ctx.fillText('方向键/WASD 跑动 · C 蓄力传球 · 空格蓄力射门（蓄力时 ←/→ 瞄准）', CX, 915);
 }
 function drawChibiPreview(p, kit) {
   var T = TEAMS[kit];
