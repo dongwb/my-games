@@ -18,7 +18,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.1.1
+   街头萌战 STREET CUP · v1.1.2
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
    ——— 首个正式发布版 v1.0.0 ———
    v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
@@ -32,6 +32,7 @@
    v1.1.0：射门蓄力——过半场按住空格蓄力 1s：松开出脚；
           <35% 软弱无力 / 正常范围原速 / 蓄满自动射但会偏
    v1.1.1：蓄力时间 1.5s → 1s（原地蓄力太容易，节奏加快）
+   v1.1.2：射偏区改为 70%~100%（红区），越满偏越多；35%~70% 绿区才准
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -556,14 +557,15 @@ function keeperCanCatch() {
 }
 
 // 蓄力射门：松开空格或蓄满时出脚
-// <35% 软弱无力（门将好扑）/ 35%~100% 正常 / 蓄满自动射：更快但会射偏
+// <35% 软弱无力（门将好扑）/ 35%~70% 正常 / 70%~100% 更快但会射偏（100% 自动出脚）
 function humanShoot(p, ch) {
   var g = enemyGoalOf(p.team);
   var aimX = postForShot(p), sp;
-  if (ch >= 1) {
+  if (ch >= 0.7) {
     sp = 780;
-    aimX += (Math.random() < 0.5 ? -1 : 1) * (30 + Math.random() * 85);   // 蓄过头，脚法变形
-    aimX = clamp(aimX, CX - GOAL_HALF - 32, CX + GOAL_HALF + 32);         // 可能擦柱甚至射飞
+    var off = (ch - 0.7) / 0.3;                                 // 越满偏越多
+    aimX += (Math.random() < 0.5 ? -1 : 1) * (25 + off * 75);   // 蓄过头，脚法变形
+    aimX = clamp(aimX, CX - GOAL_HALF - 32, CX + GOAL_HALF + 32);          // 可能擦柱甚至射飞
   } else if (ch < 0.35) {
     sp = 330;
   } else {
@@ -937,19 +939,19 @@ function drawChibi(p) {
     ctx.closePath(); ctx.fill();
   }
 }
-// 蓄力条：头顶一条，蓝=太软 / 绿=正好 / 红=快爆了；白线是 35% 及格线
+// 蓄力条：头顶一条，蓝=太软 / 绿=正好 / 红=会射偏；白线是 35% 和 70% 两条分界
 function drawCharge() {
   if (!charging || !ctrl || state !== 'play') return;
   var w = 52, h = 8;
   var x = ctrl.x - w / 2, y = ctrl.y - 46;
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
   rr(x - 2, y - 2, w + 4, h + 4, 5); ctx.fill();
-  var col = charge < 0.35 ? '#6db9ff' : (charge < 1 ? '#8fe36b' : '#ff5c5c');
-  if (charge >= 1 || charge > 0.9) col = '#ff5c5c';
+  var col = charge < 0.35 ? '#6db9ff' : (charge < 0.7 ? '#8fe36b' : '#ff5c5c');
   ctx.fillStyle = col;
   rr(x, y, Math.max(3, w * charge), h, 4); ctx.fill();
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.fillRect(x + w * 0.35, y - 1, 1.6, h + 2);         // 35% 及格线
+  ctx.fillRect(x + w * 0.7,  y - 1, 1.6, h + 2);         // 70% 射偏线
 }
 function drawHUD() {
   ctx.fillStyle = 'rgba(10,14,20,0.85)';
@@ -1008,7 +1010,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.1.1', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.1.2', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
