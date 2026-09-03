@@ -19,9 +19,11 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.0.0
+   街头萌战 2 STREET CUP 2 · v2.1.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
+   v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
+          前锋不抢球，中圈等反击
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -213,10 +215,20 @@ function gkOf(team) {
 // 每队的逼抢人（带迟滞）：两个防守队员谁近谁抢，但一旦定了就不轻易换人，
 // 否则两人距离接近时每帧互换，跑位目标左右乱跳 = 你看到的"卡顿"
 var chaserOf = [null, null];
+function nearestDefenderOfTeam(x, y, team) {   // 只有后卫（slot 0/1）负责抢球
+  var b = null, bd = 1e9;
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    if (p.team !== team || p.isGK || p.slot >= 3) continue;
+    var d = dist2(p.x, p.y, x, y);
+    if (d < bd) { bd = d; b = p; }
+  }
+  return b;
+}
 function pickChaser(team) {
-  var n = nearestFieldOfTeam(ball.x, ball.y, team);
+  var n = nearestDefenderOfTeam(ball.x, ball.y, team);
   var cur = chaserOf[team];
-  if (cur && !cur.isGK && cur !== n) {
+  if (cur && !cur.isGK && cur.slot < 2 && cur !== n) {
     var dOld = dist2(cur.x, cur.y, ball.x, ball.y);
     var dNew = dist2(n.x, n.y, ball.x, ball.y);
     if (dNew * 1.4 > dOld) n = cur;            // 旧逼抢人没明显更远，就继续让他抢
@@ -282,6 +294,21 @@ function nearestEnemyOf(p) {
   return { p: b, d: Math.sqrt(bd) };
 }
 
+// 球在我方半场吗（被反击的警报）
+function inOurHalf(team) {
+  var cy = (TY + BY) / 2;
+  return team === 0 ? ball.y > cy : ball.y < cy;
+}
+// 前锋的反击等待位：中圈附近、本方一侧、拉开边路，面朝球随时准备接应
+function waitForCounter(p, dt) {
+  var cy = (TY + BY) / 2;
+  var side = p.slot === 3 ? -1 : 1;
+  var dir = p.team === 0 ? 1 : -1;
+  aiSteer(p, clamp(CX + side * 170, LX + 30, RX - 30), cy + dir * 60, 105, dt);
+  var fx = ball.x - p.x, fy = ball.y - p.y, fm = vlen(fx, fy) || 1;
+  p.face.x = fx / fm; p.face.y = fy / fm;
+}
+
 // ============================================================
 //  唯一 AI 大脑（两队共用，只换皮肤）
 // ============================================================
@@ -334,27 +361,27 @@ function aiThink(p, dt) {
     supportRun(p, ball.owner, dt);
     return;
   }
-  // —— 对方持球：一人逼抢，两人缩回门前站位 ——
+  // —— 对方持球：前锋中圈等反击；后卫一人逼抢、一人守线 ——
   if (ball.owner) {
+    if (p.slot >= 3) { waitForCounter(p, dt); return; }
     var chaser = pickChaser(p.team);
     if (chaser === p) {
-      // 预判持球人，正面贴上去
+      // 预判持球人，正面贴上去；被反击就全速回追
       var tx = ball.owner.x + ball.owner.vx * 0.14;
       var ty = ball.owner.y + ball.owner.vy * 0.14;
-      aiSteer(p, clamp(tx, LX + 20, RX - 20), clamp(ty, TY + 20, BY - 20), 190, dt);
+      var spd = inOurHalf(p.team) ? 230 : 190;
+      aiSteer(p, clamp(tx, LX + 20, RX - 20), clamp(ty, TY + 20, BY - 20), spd, dt);
     } else {
       holdDefensiveLine(p, mine, ball, dt);
     }
     return;
   }
-  // —— 无主球：最近的人去抢，其余回到本方半场中线附近 ——
-  if (nearestFieldOfTeam(ball.x, ball.y, p.team) === p) {
-    aiSteer(p, ball.x, ball.y, 170, dt);
+  // —— 无主球：前锋不回头抢；后卫谁近谁去，另一个守线 ——
+  if (p.slot >= 3) { waitForCounter(p, dt); return; }
+  if (nearestDefenderOfTeam(ball.x, ball.y, p.team) === p) {
+    aiSteer(p, ball.x, ball.y, 190, dt);
   } else {
-    var cy = (TY + BY) / 2;
-    var dir = p.team === 0 ? 1 : -1;             // 站本方那半边（队0守下方、队1守上方）
-    var side = p.slot === 2 ? 1 : -1;            // 左右岔开
-    aiSteer(p, clamp(CX + side * 160, LX + 25, RX - 25), cy + dir * 80, 105, dt);
+    holdDefensiveLine(p, mine, ball, dt);
   }
 }
 
@@ -368,10 +395,15 @@ function supportRun(p, c, dt) {
   var th = nearestEnemyOf(p);
   var tx, ty;
   if (p.slot < 2) {
-    // 后卫：持球人斜后方，做安全回传点
+    // 后卫：持球人斜后方做回传点，但平时留在本方半场（不过中线）；
+    // 球队深压到对方禁区前沿（进攻机会）时才前推到弧顶附近
     var w1 = th.p && th.d < 60 ? 190 : 150;
     tx = c.x + rX * side * w1 - fwdX * 80;
     ty = c.y + rY * side * w1 - fwdY * 80;
+    var cy2 = (TY + BY) / 2;
+    var prog = p.team === 0 ? (cy2 - c.y) : (c.y - cy2);   // 持球人压上了多少
+    if (p.team === 0) ty = Math.max(ty, prog > 250 ? boxOf(1).hiY + 40 : cy2 - 20);
+    else              ty = Math.min(ty, prog > 250 ? boxOf(0).loY - 40 : cy2 + 20);
   } else {
     // 前锋：斜插前方侧翼空当，给直塞留线路
     var w2 = th.p && th.d < 60 ? 200 : 160;
@@ -388,22 +420,14 @@ function supportRun(p, c, dt) {
 
 // 防守站位：两个退防队员一左一右守住"球—本方球门"连线
 function holdDefensiveLine(p, mine, b, dt) {
-  var ch = pickChaser(p.team);                  // 逼抢的那个人（带迟滞，不会来回跳）
-  // 非逼抢的防守队员按槽位排序，门前一字排开
-  var rank = 0, total = 0;
-  for (var i = 0; i < players.length; i++) {
-    var q = players[i];
-    if (q.team !== p.team || q.isGK || q === ch) continue;
-    total++;
-    if (q.slot < p.slot) rank++;
-  }
-  var offs = total === 1 ? [0] : (total === 2 ? [-100, 100] : [-150, 0, 150]);
-  var post = offs[rank] || 0;
-  var tx = clamp(mine.x + (b.x - mine.x) * 0.4 + post, CX - GOAL_HALF - 60, CX + GOAL_HALF + 60);
+  // 左后卫守左、右后卫守右，固定不换边，也不跟前锋混抢
+  var post = (p.slot === 0 ? -95 : 95);
+  var tx = clamp(mine.x + (b.x - mine.x) * 0.35 + post, CX - GOAL_HALF - 60, CX + GOAL_HALF + 60);
   var dy = b.y - mine.y;
-  var depth = clamp(vlen(b.x - mine.x, dy) / 900, 0.25, 0.8);
+  var depth = clamp(vlen(b.x - mine.x, dy) / 900, 0.22, 0.75);
   var ty = clamp(mine.y + dy * depth, TY + 40, BY - 40);
-  aiSteer(p, tx, ty, 125, dt);
+  var spd = (b.owner && inOurHalf(p.team)) ? 215 : 125;   // 对面打反击：立刻全速回防
+  aiSteer(p, tx, ty, spd, dt);
 }
 
 // 找一个更好的传球对象（比带球人更靠近对方球门、又没被贴死）
@@ -1076,7 +1100,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.0.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.1.0', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
