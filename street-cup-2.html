@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.2.0
+   街头萌战 2 STREET CUP 2 · v2.2.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -27,6 +27,7 @@
    v2.1.1：修开球前锋站桩——球在中圈/对方半场无主时前锋要去抢
    v2.2.0：队魂 AI——阿根廷防反（深防线/长传找前锋/前锋压上），
           西班牙控球（小三角短传/高压倒脚/防线前压）
+   v2.2.1：修选西班牙时比分记反——进球按队伍编号映射到"你/AI"
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -61,7 +62,7 @@ var state = 'menu';            // menu | kickoff | play | over
 var pickIdx = 0;               // 玩家队
 var players = [], ball = null;
 var scores = [0, 0];           // [玩家队, AI队]
-var clock = 120, goalFlash = 0, goalSide = -1, readyT = 0;
+var clock = 120, goalFlash = 0, goalSide = -1, goalTeam = -1, readyT = 0;
 var winner = null;
 var ctrl = null;               // 本帧玩家真正操控的人
 var ctrlAge = 99;              // 距上次换人过了几秒（防频繁切换）
@@ -722,12 +723,13 @@ function stepBall(dt) {
   if (b.x - b.r < LX) { b.x = LX + b.r; b.vx = -b.vx * 0.55; }
   if (b.x + b.r > RX) { b.x = RX - b.r; b.vx = -b.vx * 0.55; }
 }
-function goalFor(team) {
+function goalFor(team) {                     // team = 进球的队伍编号（0阿根廷/1西班牙）
   if (state !== 'play') return;
-  scores[team]++;
-  goalFlash = 1.4; goalSide = team;
+  var idx = team === pickIdx ? 0 : 1;        // scores[0]=你，scores[1]=AI
+  scores[idx]++;
+  goalFlash = 1.4; goalSide = idx; goalTeam = team;
   goalSfx();
-  if (scores[team] >= 5) { endMatch(); return; }
+  if (scores[idx] >= 5) { endMatch(); return; }
   setupPositions();          // 立刻刷回中圈
   state = 'kickoff';
   readyT = 3.0;
@@ -1107,7 +1109,7 @@ function drawFlash() {
   ctx.fillText(goalSide === 0 ? '进球！' : '被进球…', CX, (TY + BY) / 2 - 60);
   ctx.font = 'bold 22px sans-serif';
   ctx.fillStyle = '#ffe14d';
-  ctx.fillText(TEAMS[goalSide].name + ' ' + scores[goalSide] + ' 球', CX, (TY + BY) / 2);
+  ctx.fillText(TEAMS[goalTeam].name + ' ' + scores[goalSide] + ' 球', CX, (TY + BY) / 2);
   ctx.shadowBlur = 0;
 }
 function drawKickoff() {
@@ -1130,7 +1132,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.2.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.2.1', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
@@ -1166,7 +1168,7 @@ function drawChibiPreview(p) {
 function drawOver() {
   ctx.fillStyle = 'rgba(10,14,20,0.8)'; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  var you = winner === pickIdx;
+  var you = winner === 0;         // scores[0] 永远是你这队
   ctx.fillStyle = you ? '#ffe14d' : '#7c8b9d';
   ctx.font = 'bold 30px sans-serif';
   ctx.fillText(you ? '🎉 你赢了！' : '对手赢了…', CX, 420);
