@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.6.0
+   街头萌战 2 STREET CUP 2 · v2.6.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -41,6 +41,7 @@
           兜底传最近的），修"直接传给对面"
    v2.6.0：门将脱手——红区射门 70~90% 扑球 50% 脱手，蓄满 100% 射正必脱手，
           脱手球物理滑落成无主球，双方拼抢
+   v2.6.1：蓄力条 1s → 0.5s（射门/传球同步），减少被断窗口
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -84,9 +85,9 @@ var preferT = 0;               // preferCtrl 的有效倒计时
 var prevSpace = false;         // 空格按下沿检测（射门）
 var prevC = false;             // C 按下沿检测（传球）
 var pCharging = false;         // 正在蓄力传球
-var pCharge = 0;               // 传球蓄力进度 0~1（1 秒蓄满）
+var pCharge = 0;               // 传球蓄力进度 0~1（0.5 秒蓄满）
 var charging = false;          // 正在蓄力射门
-var charge = 0;                // 蓄力进度 0~1（1 秒蓄满）
+var charge = 0;                // 蓄力进度 0~1（0.5 秒蓄满）
 var lastKickTeam = -1;         // 球最后是被哪一队踢的（传球/射门归属）
 var stats = null;                // 全场技术统计：传球/射门/扑救/控球时长
 
@@ -938,20 +939,20 @@ function update(dt) {
   if (state !== 'play') return;
   settleBall();
 
-  // 空格=射门蓄力 / C=传球蓄力（都是按住 1 秒蓄满，松开或蓄满出脚；球被断则作废）
+  // 空格=射门蓄力 / C=传球蓄力（都是按住 0.5 秒蓄满，松开或蓄满出脚；球被断则作废）
   var spNow = !!KEYS[' '], cNow = !!KEYS['c'];
   var ow = ball.owner;
   var mine = ow && ow.team === pickIdx && !ow.isGK;
   if (!charging && mine && spNow && !prevSpace) { charging = true; charge = 0; }
   if (!pCharging && mine && cNow && !prevC) { pCharging = true; pCharge = 0; }
   if (charging) {
-    charge = Math.min(1, charge + dt);
+    charge = Math.min(1, charge + dt * 2);       // 0.5 秒蓄满
     if (!mine) { charging = false; charge = 0; }
     else if (!spNow) { humanShoot(ow, charge); charging = false; charge = 0; }
     else if (charge >= 1) { humanShoot(ow, 1); charging = false; charge = 0; }   // 蓄满自动射（会偏）
   }
   if (pCharging) {
-    pCharge = Math.min(1, pCharge + dt);
+    pCharge = Math.min(1, pCharge + dt * 2);     // 0.5 秒蓄满
     if (!mine) { pCharging = false; pCharge = 0; }
     else if (!cNow) { passTeammate(ow, pCharge); pCharging = false; pCharge = 0; }
     else if (pCharge >= 1) { passTeammate(ow, 1); pCharging = false; pCharge = 0; }  // 蓄满自动传（太冲）
@@ -1203,7 +1204,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.6.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.6.1', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
