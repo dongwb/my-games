@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.8.0
+   街头萌战 2 STREET CUP 2 · v2.8.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -45,6 +45,8 @@
    ——— 里程碑版本 v2.7.0：队魂/脱手/双蓄力 手感定稿 ———
    v2.8.0：自由瞄准射门——蓄力时 ←/→ 连续转瞄准线（±45°），
           绿区指哪打哪，红区按偏移角射偏
+   v2.8.1：瞄准转速减半 / 蓄满不再自动发射（停在100%等你松手）/
+          红区偏移角收敛——满力脱手战术可控了
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -292,8 +294,8 @@ function humanMove(p, dt) {
     if (charging) {
       // 蓄力中 ←/→ 转动瞄准方向（±45°），面朝瞄准线
       var aDir = p.team === 0 ? 1 : -1;              // 屏幕左=向左瞄，两队自适应
-      if (KEYS['arrowleft']  || KEYS['a']) aimOff -= aDir * dt * 2.2;
-      if (KEYS['arrowright'] || KEYS['d']) aimOff += aDir * dt * 2.2;
+      if (KEYS['arrowleft']  || KEYS['a']) aimOff -= aDir * dt * 1.1;
+      if (KEYS['arrowright'] || KEYS['d']) aimOff += aDir * dt * 1.1;
       aimOff = clamp(aimOff, -0.8, 0.8);
       var ang = Math.atan2(gg.y - p.y, gg.x - p.x) + aimOff;
       p.face.x = Math.cos(ang); p.face.y = Math.sin(ang);
@@ -712,7 +714,7 @@ function humanShoot(p, ch) {
   if (ch >= 0.7) {
     sp = 880;
     var off = (ch - 0.7) / 0.3;                          // 红区：越满偏越多
-    ang += (Math.random() * 2 - 1) * (0.05 + off * 0.14);
+    ang += (Math.random() * 2 - 1) * (0.04 + off * 0.09);
   } else if (ch < 0.35) {
     sp = 400;
   } else {
@@ -963,14 +965,12 @@ function update(dt) {
   if (charging) {
     charge = Math.min(1, charge + dt * 2);       // 0.5 秒蓄满
     if (!mine) { charging = false; charge = 0; }
-    else if (!spNow) { humanShoot(ow, charge); charging = false; charge = 0; }
-    else if (charge >= 1) { humanShoot(ow, 1); charging = false; charge = 0; }   // 蓄满自动射（会偏）
+    else if (!spNow) { humanShoot(ow, charge); charging = false; charge = 0; }   // 蓄满停在100%等你松手
   }
   if (pCharging) {
     pCharge = Math.min(1, pCharge + dt * 2);     // 0.5 秒蓄满
     if (!mine) { pCharging = false; pCharge = 0; }
-    else if (!cNow) { passTeammate(ow, pCharge); pCharging = false; pCharge = 0; }
-    else if (pCharge >= 1) { passTeammate(ow, 1); pCharging = false; pCharge = 0; }  // 蓄满自动传（太冲）
+    else if (!cNow) { passTeammate(ow, pCharge); pCharging = false; pCharge = 0; }  // 蓄满停在100%等你松手
   }
   prevSpace = spNow; prevC = cNow;
 }
@@ -1231,7 +1231,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.8.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.8.1', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
