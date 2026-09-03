@@ -19,12 +19,14 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.1.1
+   街头萌战 2 STREET CUP 2 · v2.2.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
           前锋不抢球，中圈等反击
    v2.1.1：修开球前锋站桩——球在中圈/对方半场无主时前锋要去抢
+   v2.2.0：队魂 AI——阿根廷防反（深防线/长传找前锋/前锋压上），
+          西班牙控球（小三角短传/高压倒脚/防线前压）
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -44,6 +46,14 @@ var TEAMS = [
     shorts:'#0C2340', socks:'#75AADB', gk:'#22c3ac' },
   { id:'ESP', name:'西班牙', jersey:'#AA151B', stripe:'#F1BF00', collar:'#0C2340',
     shorts:'#0C2340', socks:'#AA151B', gk:'#ffad1f' }
+];
+
+// ---------- 队魂：两队同骨架，风格参数分叉 ----------
+// pressD=被逼多近才传 shotR=AI起脚距离 supportK=接应距离系数
+// waitY=前锋等反击的纵深(+靠后/-压上) defDepth=防线纵深区间 outletFwd=开球找前锋加成
+var SOUL = [
+  { pressD: 50, shotR: 430, supportK: 1.0,  waitY: -90, defDepth: [0.18, 0.55], outletFwd: 120 },  // 阿根廷：防反
+  { pressD: 88, shotR: 350, supportK: 0.72, waitY: 60,  defDepth: [0.35, 0.85], outletFwd: 0 }     // 西班牙：控球
 ];
 
 // ---------- 状态 ----------
@@ -315,7 +325,7 @@ function waitForCounter(p, dt) {
   var cy = (TY + BY) / 2;
   var side = p.slot === 3 ? -1 : 1;
   var dir = p.team === 0 ? 1 : -1;
-  aiSteer(p, clamp(CX + side * 170, LX + 30, RX - 30), cy + dir * 60, 105, dt);
+  aiSteer(p, clamp(CX + side * 170, LX + 30, RX - 30), cy + dir * SOUL[p.team].waitY, 105, dt);
   var fx = ball.x - p.x, fy = ball.y - p.y, fm = vlen(fx, fy) || 1;
   p.face.x = fx / fm; p.face.y = fy / fm;
 }
@@ -341,8 +351,8 @@ function aiThink(p, dt) {
     var th = nearestEnemyOf(p);
 
     // 近门果断射
-    if (dG < 380) {
-      var chance = (1 - dG / 380) * 0.85;
+    if (dG < SOUL[p.team].shotR) {
+      var chance = (1 - dG / SOUL[p.team].shotR) * 0.85;
       if (th.p && th.d < 75) chance *= 0.35;
       if (Math.random() < chance) {
         var aimX = CX + (Math.random() < 0.5 ? -1 : 1) * (24 + Math.random() * 46);   // 打角度别喂门将
@@ -350,8 +360,8 @@ function aiThink(p, dt) {
         return;
       }
     }
-    // 被贴身逼抢 → 找空位队友
-    if (th.p && th.d < 60) {
+    // 被贴身逼抢 → 找空位队友（西班牙更早倒脚，阿根廷多带两步）
+    if (th.p && th.d < SOUL[p.team].pressD) {
       var t = bestTeammate(p);
       if (t) { kickToward(p, t.x + t.vx * 0.2, t.y + t.vy * 0.2, 410); return; }
     }
@@ -410,23 +420,24 @@ function supportRun(p, c, dt) {
   var fwdX = fx / fl, fwdY = fy / fl;            // 进攻方向（指向对方球门）
   var rX = -fwdY, rY = fwdX;                     // 进攻方向的右侧
   var side = (p.slot % 2 === 0) ? -1 : 1;        // 偶数槽左路、奇数槽右路，固定不换边
+  var K = SOUL[p.team].supportK;                 // 西班牙接应圈更小（短传控球）
   var th = nearestEnemyOf(p);
   var tx, ty;
   if (p.slot < 2) {
     // 后卫：持球人斜后方做回传点，但平时留在本方半场（不过中线）；
     // 球队深压到对方禁区前沿（进攻机会）时才前推到弧顶附近
-    var w1 = th.p && th.d < 60 ? 190 : 150;
-    tx = c.x + rX * side * w1 - fwdX * 80;
-    ty = c.y + rY * side * w1 - fwdY * 80;
+    var w1 = (th.p && th.d < 60 ? 190 : 150) * K;
+    tx = c.x + rX * side * w1 - fwdX * 80 * K;
+    ty = c.y + rY * side * w1 - fwdY * 80 * K;
     var cy2 = (TY + BY) / 2;
     var prog = p.team === 0 ? (cy2 - c.y) : (c.y - cy2);   // 持球人压上了多少
     if (p.team === 0) ty = Math.max(ty, prog > 250 ? boxOf(1).hiY + 40 : cy2 - 20);
     else              ty = Math.min(ty, prog > 250 ? boxOf(0).loY - 40 : cy2 + 20);
   } else {
     // 前锋：斜插前方侧翼空当，给直塞留线路
-    var w2 = th.p && th.d < 60 ? 200 : 160;
-    tx = c.x + fwdX * 200 + rX * side * w2;
-    ty = c.y + fwdY * 200 + rY * side * w2;
+    var w2 = (th.p && th.d < 60 ? 200 : 160) * K;
+    tx = c.x + fwdX * 200 * K + rX * side * w2;
+    ty = c.y + fwdY * 200 * K + rY * side * w2;
     if (p.team === 0) ty = Math.max(ty, TY + 90);
     else              ty = Math.min(ty, BY - 90);
   }
@@ -442,7 +453,8 @@ function holdDefensiveLine(p, mine, b, dt) {
   var post = (p.slot === 0 ? -95 : 95);
   var tx = clamp(mine.x + (b.x - mine.x) * 0.35 + post, CX - GOAL_HALF - 60, CX + GOAL_HALF + 60);
   var dy = b.y - mine.y;
-  var depth = clamp(vlen(b.x - mine.x, dy) / 900, 0.22, 0.75);
+  var dd2 = SOUL[p.team].defDepth;
+  var depth = clamp(vlen(b.x - mine.x, dy) / 900, dd2[0], dd2[1]);
   var ty = clamp(mine.y + dy * depth, TY + 40, BY - 40);
   var spd = (b.owner && inOurHalf(p.team)) ? 215 : 125;   // 对面打反击：立刻全速回防
   aiSteer(p, tx, ty, spd, dt);
@@ -459,7 +471,7 @@ function bestTeammate(p) {
     var th = nearestEnemyOf(t);
     var t2g = vlen(g.x - t.x, g.y - t.y);
     var open = th.p ? th.d : 999;
-    var score = (p2g - t2g) * 2 - (open < 48 ? 160 : 0) - 0.25 * t2g;
+    var score = (p2g - t2g) * 2 - (open < 48 ? 160 : 0) - 0.25 * t2g + (t.slot >= 3 ? SOUL[p.team].outletFwd * 0.5 : 0);
     if (open > 34 && score > bestScore) { bestScore = score; best = t; }
   }
   return bestScore > 18 ? best : null;
@@ -603,7 +615,7 @@ function outletTeammate(gk) {
     var open = th.p ? th.d : 999;
     if (open <= 60) continue;                    // 线路被贴着，不考虑
     var t2g = vlen(g.x - t.x, g.y - t.y);
-    var score = open - t2g * 0.2;                // 越空、越靠前越好
+    var score = open - t2g * 0.2 + (t.slot >= 3 ? SOUL[gk.team].outletFwd : 0);   // 阿根廷优先长传找前锋
     if (score > bestScore) { bestScore = score; best = t; }
   }
   return best;                                   // null = 没有安全线路
@@ -1118,7 +1130,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.1.1', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.2.0', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
@@ -1128,9 +1140,9 @@ function drawMenu() {
     drawChibiPreview(p); ctx.restore();
     ctx.font = sel ? 'bold 26px sans-serif' : '22px sans-serif';
     ctx.fillStyle = sel ? '#ffe14d' : '#aab6c4';
-    ctx.fillText(t.name + '  ·  ' + (i === 0 ? '你控蓝白军' : '你控红军'), CX + 6, py - 30 + 40);
+    ctx.fillText(t.name + '  ·  ' + (i === 0 ? '防反队' : '控球队'), CX + 6, py - 30 + 40);
     ctx.font = '14px sans-serif'; ctx.fillStyle = '#7c8b9d';
-    ctx.fillText(i === 0 ? '主色 白×天蓝' : '主色 深红×海军蓝肩', CX + 6, py + 60);
+    ctx.fillText(i === 0 ? '队魂：防守反击 · 长传找前锋' : '队魂：控球倒脚 · 短传渗透', CX + 6, py + 60);
     py += 190;
   }
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
