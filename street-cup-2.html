@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.2.2
+   街头萌战 2 STREET CUP 2 · v2.3.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -29,6 +29,7 @@
           西班牙控球（小三角短传/高压倒脚/防线前压）
    v2.2.1：修选西班牙时比分记反——进球按队伍编号映射到"你/AI"
    v2.2.2：修门将死循环——对方不再堵门（回去防守）/ 大脚改开边路
+   v2.3.0：赛后技术统计——比分/控球率/传球/射门/扑救 五维表格
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -73,6 +74,7 @@ var prevSpace = false;         // 空格按下沿检测
 var charging = false;          // 正在蓄力射门
 var charge = 0;                // 蓄力进度 0~1（1 秒蓄满）
 var lastKickTeam = -1;         // 球最后是被哪一队踢的（传球/射门归属）
+var stats = null;                // 全场技术统计：传球/射门/扑救/控球时长
 
 // ---------- 按键 ----------
 var KEYS = {};
@@ -142,8 +144,10 @@ function mkPlayer(team, slot) {
     gkHold: 0, diveT: 0, diveDir: 0
   };
 }
+function newStats() { return [{ pass: 0, shot: 0, save: 0, poss: 0 }, { pass: 0, shot: 0, save: 0, poss: 0 }]; }
 function startMatch() {
   scores = [0, 0]; clock = 120; winner = null; lastKickTeam = -1;
+  stats = newStats();
   chaserOf = [null, null]; ctrlAge = 99;
   players = [];
   ball = { x: CX, y: (TY + BY) / 2, vx: 0, vy: 0, r: 9, owner: null, free: 0 };
@@ -357,7 +361,7 @@ function aiThink(p, dt) {
       if (th.p && th.d < 75) chance *= 0.35;
       if (Math.random() < chance) {
         var aimX = CX + (Math.random() < 0.5 ? -1 : 1) * (24 + Math.random() * 46);   // 打角度别喂门将
-        kickToward(p, clamp(aimX, CX - GOAL_HALF + 12, CX + GOAL_HALF - 12), g.y, 760);
+        kickToward(p, clamp(aimX, CX - GOAL_HALF + 12, CX + GOAL_HALF - 12), g.y, 760, 'shot');
         return;
       }
     }
@@ -479,12 +483,13 @@ function bestTeammate(p) {
 }
 
 // 出脚：把球朝 (tx,ty) 踢出去，之后球只靠惯性滚动，不再被谁带着乱动
-function kickToward(p, tx, ty, sp) {
+function kickToward(p, tx, ty, sp, kind) {
   var dx = tx - p.x, dy = ty - p.y, m = vlen(dx, dy) || 1;
   var fx = dx / m, fy = dy / m;
   ball.vx = fx * sp; ball.vy = fy * sp;
   ball.owner = null; ball.free = 0.14;
   lastKickTeam = p.team;
+  if (stats) { if (kind === 'shot') stats[p.team].shot++; else stats[p.team].pass++; }
   p.face.x = fx; p.face.y = fy;
   p.vx = fx * 60; p.vy = fy * 60;               // 出脚轻微前顶
   kickSfx();
@@ -508,7 +513,7 @@ function humanKick(p) {
     kickToward(p, best.x, best.y, 420);
     preferCtrl = best; preferT = 0.9;          // 锁定接球人，传球路上就能接管
   } else {
-    kickToward(p, postForShot(p), g.y, 760);   // 朝门柱内侧打，别总踢中路喂门将
+    kickToward(p, postForShot(p), g.y, 760, 'shot');   // 朝门柱内侧打，别总踢中路喂门将
     preferCtrl = null; preferT = 0;            // 射门不锁人
   }
 }
@@ -658,7 +663,7 @@ function humanShoot(p, ch) {
   } else {
     sp = 760;
   }
-  kickToward(p, aimX, g.y, sp);
+  kickToward(p, aimX, g.y, sp, 'shot');
   preferCtrl = null; preferT = 0;
 }
 
@@ -706,6 +711,7 @@ function stepBall(dt) {
     ball.free = 0.5;                             // 扑住保护期，防原地被捅走
     lastKickTeam = gkSave.team;
     gkSave.gkHold = 0;
+    if (stats) stats[gkSave.team].save++;
     var gyUp = gkSave.team === 0 ? TY : BY;
     var fdx = CX - gkSave.x, fdy = gyUp - gkSave.y, fm2 = vlen(fdx, fdy) || 1;
     gkSave.face.x = fdx / fm2; gkSave.face.y = fdy / fm2;   // 面朝对方半场，准备开球
@@ -808,6 +814,7 @@ function update(dt) {
   if (clock <= 0 && scores[0] !== scores[1]) { endMatch(); return; }
   clock = Math.max(0, clock - dt);
   goalFlash = Math.max(0, goalFlash - dt);
+  if (ball.owner) stats[ball.owner.team].poss += dt;   // 控球率按持球时间算
 
   // 决定操控对象（丢球=最近的人，持球=带球人，不会乱跳）
   preferT = Math.max(0, preferT - dt);
@@ -1135,7 +1142,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.2.2', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.3.0', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
@@ -1169,16 +1176,51 @@ function drawChibiPreview(p) {
   ctx.beginPath(); ctx.arc(0, -9, 3, 0.15, Math.PI - 0.15); ctx.stroke();
 }
 function drawOver() {
-  ctx.fillStyle = 'rgba(10,14,20,0.8)'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(10,14,20,0.85)'; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
   var you = winner === 0;         // scores[0] 永远是你这队
   ctx.fillStyle = you ? '#ffe14d' : '#7c8b9d';
-  ctx.font = 'bold 30px sans-serif';
-  ctx.fillText(you ? '🎉 你赢了！' : '对手赢了…', CX, 420);
-  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 56px sans-serif';
-  ctx.fillText(scores[0] + ' : ' + scores[1], CX, 500);
+  ctx.font = 'bold 34px sans-serif';
+  ctx.fillText(you ? '🎉 你赢了！' : '对手赢了…', CX, 290);
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 64px sans-serif';
+  ctx.fillText(scores[0] + ' : ' + scores[1], CX, 375);
+
+  // —— 全场数据统计表（左列=你，右列=AI） ——
+  var t0 = pickIdx, t1 = pickIdx ^ 1;
+  var pt = stats[t0].poss + stats[t1].poss || 1;
+  var poss0 = Math.round(stats[t0].poss / pt * 100);
+  var rows = [
+    ['比分',     '' + scores[0],           '' + scores[1]],
+    ['控球率',   poss0 + '%',              (100 - poss0) + '%'],
+    ['传球',     '' + stats[t0].pass,      '' + stats[t1].pass],
+    ['射门',     '' + stats[t0].shot,      '' + stats[t1].shot],
+    ['门将扑救', '' + stats[t0].save,      '' + stats[t1].save]
+  ];
+  var xL = CX - 200, xR = CX + 200, y = 465;
+  ctx.font = 'bold 24px sans-serif';
+  ctx.fillStyle = t0 === 0 ? '#ffffff' : '#e05146';
+  ctx.fillText(TEAMS[t0].name + '（你）', xL, y);
+  ctx.fillStyle = t1 === 0 ? '#ffffff' : '#e05146';
+  ctx.fillText(TEAMS[t1].name, xR, y);
+  ctx.fillStyle = '#9fb0c2'; ctx.font = 'bold 20px sans-serif';
+  ctx.fillText('全场技术统计', CX, y);
+  y += 18;
+  for (var i = 0; i < rows.length; i++) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(CX - 300, y); ctx.lineTo(CX + 300, y); ctx.stroke();
+    ctx.fillStyle = '#8fa0b3'; ctx.font = '18px sans-serif';
+    ctx.fillText(rows[i][0], CX, y + 32);
+    var v0win = parseFloat(rows[i][1]) >= parseFloat(rows[i][2]);   // 占优的加亮
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillStyle = v0win ? '#ffe14d' : '#c8d3de';
+    ctx.fillText(rows[i][1], xL, y + 32);
+    ctx.fillStyle = v0win ? '#c8d3de' : '#ffe14d';
+    ctx.fillText(rows[i][2], xR, y + 32);
+    y += 52;
+  }
+
   ctx.fillStyle = '#9fb0c2'; ctx.font = '18px sans-serif';
-  ctx.fillText('按 Space / Enter 回主菜单', CX, 600);
+  ctx.fillText('按 Space / Enter 回主菜单', CX, y + 40);
 }
 function draw() {
   ctx.clearRect(0, 0, W, H);
