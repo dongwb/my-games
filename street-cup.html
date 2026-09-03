@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.1.6
+   街头萌战 STREET CUP · v1.2.0
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
    ——— 首个正式发布版 v1.0.0 ———
    v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
@@ -38,6 +38,8 @@
    v1.1.4：门将侧扑动作——球飞来时倒地扑向球侧，扑球时手套范围 +16
    v1.1.5：侧扑手感——扑出冲量保留 0.35s 有位移感，全程 0.75s 缓慢恢复
    v1.1.6：街头氛围——页面背景贴铁丝网+涂鸦墙夜景图（压暗 74% 不抢戏）
+   ——— 里程碑版本 v1.2.0 ———
+   v1.2.0：球衣细节——阿根廷三竖条/西班牙藏蓝肩袖+黄细纹，V领+裤边
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -908,9 +910,41 @@ function drawBall() {
   ctx.beginPath(); ctx.moveTo(b.x - b.r, b.y); ctx.lineTo(b.x + b.r, b.y); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(b.x, b.y - b.r); ctx.lineTo(b.x, b.y + b.r); ctx.stroke();
 }
+// 球衣细节：条纹裁剪在球衣轮廓内；V 领、裤边、肩袖撞色
+function drawKit(p) {
+  var T = TEAMS[p.team];
+  ctx.fillStyle = T.shorts;
+  rr(-9, 10, 18, 9, 3); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  ctx.fillRect(-9, 10, 18, 1.6);                       // 短裤白边
+  ctx.fillStyle = p.isGK ? T.gk : T.jersey;
+  ctx.beginPath(); ctx.ellipse(0, 4, 10, 10, 0, 0, 7); ctx.fill();
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(0, 4, 10, 10, 0, 0, 7); ctx.clip();
+  if (p.isGK) {
+    ctx.fillStyle = T.collar;
+    rr(-10, -3, 20, 6, 3); ctx.fill();                 // 门将胸前护带
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(-10, -6, 20, 2.4);                    // 肩线阴影
+  } else if (p.team === 0) {
+    ctx.fillStyle = T.stripe;                          // 阿根廷：三条天蓝竖条
+    ctx.fillRect(-7.4, -6, 3.4, 20);
+    ctx.fillRect(-1.7, -6, 3.4, 20);
+    ctx.fillRect(4.0, -6, 3.4, 20);
+  } else {
+    ctx.fillStyle = T.collar;                          // 西班牙：藏蓝肩袖
+    ctx.fillRect(-10, -6, 4.8, 9);
+    ctx.fillRect(5.2, -6, 4.8, 9);
+    ctx.fillStyle = T.stripe;                          // 两道细黄竖纹
+    ctx.fillRect(-3.4, -6, 1.8, 20);
+    ctx.fillRect(1.6, -6, 1.8, 20);
+  }
+  ctx.restore();
+  ctx.strokeStyle = T.collar; ctx.lineWidth = 1.5;     // V 领撞色
+  ctx.beginPath(); ctx.moveTo(-2.8, -4.6); ctx.lineTo(0, -1.6); ctx.lineTo(2.8, -4.6); ctx.stroke();
+}
 function drawChibi(p) {
   var T = TEAMS[p.team];
-  var jersey = p.isGK ? T.gk : T.jersey;       // 门将穿专属色，一眼认出
   var sx = 1, sy = 1;
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.beginPath(); ctx.ellipse(p.x, p.y + 20, p.isGK ? 17 : 14, 5, 0, 0, 7); ctx.fill();
@@ -943,25 +977,7 @@ function drawChibi(p) {
   ctx.fillRect(-9 + sw * 0.7, 20, 7, 4);
   ctx.fillRect(2 - sw * 0.7, 20, 7, 4);
 
-  ctx.fillStyle = T.shorts;
-  rr(-9, 10, 18, 9, 3); ctx.fill();
-  ctx.fillStyle = jersey;
-  ctx.beginPath();
-  ctx.ellipse(0, 4, 10, 10, 0, 0, 7); ctx.fill();
-  ctx.save();
-  if (p.isGK) {
-    ctx.fillStyle = T.collar;
-    rr(-10, -3, 20, 6, 3); ctx.fill();         // 门将胸前小护带
-  } else if (p.team === 0) {
-    ctx.fillStyle = T.stripe;
-    ctx.fillRect(-1.6, -4, 3.2, 12);
-  } else {
-    ctx.fillStyle = T.collar;
-    rr(-10, -4, 20, 7, 3.5); ctx.fill();
-    ctx.fillStyle = T.stripe;
-    ctx.fillRect(-1.4, -5, 2.8, 13);
-  }
-  ctx.restore();
+  drawKit(p);
 
   var hr = 13, headY = -14;
   ctx.fillStyle = skin;
@@ -1071,7 +1087,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.1.6', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.2.0', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
@@ -1094,10 +1110,7 @@ function drawMenu() {
 }
 function drawChibiPreview(p) {
   var T = TEAMS[p.team];
-  ctx.fillStyle = T.shorts; rr(-9, 10, 18, 9, 3); ctx.fill();
-  ctx.fillStyle = T.jersey; ctx.beginPath(); ctx.ellipse(0, 4, 10, 10, 0, 0, 7); ctx.fill();
-  if (p.team === 0) { ctx.fillStyle = T.stripe; ctx.fillRect(-1.6, -4, 3.2, 12); }
-  else { ctx.fillStyle = T.collar; rr(-10, -4, 20, 7, 3.5); ctx.fill(); ctx.fillStyle = T.stripe; ctx.fillRect(-1.4, -5, 2.8, 13); }
+  drawKit(p);
   var skin = ['#f5c69a', '#f0be90'][p.team % 2];
   ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(0, -14, 13, 0, 7); ctx.fill();
   ctx.fillStyle = '#3a2b22'; ctx.beginPath(); ctx.arc(0, -19.8, 9.4, Math.PI, Math.PI * 2); ctx.fill();
