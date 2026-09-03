@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v4.1.0
+   街头萌战 2 STREET CUP 2 · v4.2.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -60,6 +60,8 @@
    ═══ 超级里程碑 v4.0.0 双人版：P1(WASD+C+空格) vs P2(方向键+K+L)
       同键盘对战，菜单"模式"行切换 单人/双人 ═══
    v4.1.0：AI 难度三档——简单(慢/不爱射/门将手短)、中等、困难(快/果断/门将手长)
+   v4.2.0：音效真实化——踢球低频砰+皮革脆响、裁判哨（颤音）、
+          进球欢呼声浪、门将手套闷响、扑球风声、撞墙闷响
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -153,7 +155,7 @@ addEventListener('keydown', function (e) {
     if (k === 'w' || k === 's' || k === 'arrowup' || k === 'arrowdown') menuRow = (menuRow + 1) % 4;
     if (k === 'a' || k === 'arrowleft')  menuMove(-1);
     if (k === 'd' || k === 'arrowright') menuMove(1);
-    if (k === 'enter') { snd('whistle', 0.18, 1.0); startMatch(); }
+    if (k === 'enter') { whistleSfx(0.3); startMatch(); }
   } else if (state === 'over') {
     if (k === ' ' || k === 'enter') { state = 'menu'; scores = [0, 0]; }
   }
@@ -177,24 +179,94 @@ function menuMove(dir) {
   }
 }
 
-// ---------- 音效 ----------
-var AC = null;
-function snd(type, dur, f, f2, vol) {
+// ---------- 音效（噪声+滤波模拟真实音色） ----------
+var AC = null, NOISE = null;
+function ac() {
   try {
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
     if (AC.state === 'suspended') AC.resume();
-    var o = AC.createOscillator(), g = AC.createGain();
+    if (!NOISE) {
+      NOISE = AC.createBuffer(1, AC.sampleRate, AC.sampleRate);
+      var d = NOISE.getChannelData(0);
+      for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+  } catch (e) {}
+  return AC;
+}
+function snd(type, dur, f, f2, vol) {
+  var a = ac(); if (!a) return;
+  try {
+    var o = a.createOscillator(), g = a.createGain();
     o.type = type || 'square';
-    o.frequency.setValueAtTime(f || 220, AC.currentTime);
-    if (f2) o.frequency.exponentialRampToValueAtTime(f2, AC.currentTime + dur);
-    g.gain.setValueAtTime(vol || 0.045, AC.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.0001, AC.currentTime + dur);
-    o.connect(g); g.connect(AC.destination);
-    o.start(); o.stop(AC.currentTime + dur + 0.02);
+    o.frequency.setValueAtTime(f || 220, a.currentTime);
+    if (f2) o.frequency.exponentialRampToValueAtTime(f2, a.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.045, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
+    o.connect(g); g.connect(a.destination);
+    o.start(); o.stop(a.currentTime + dur + 0.02);
   } catch (e) {}
 }
-function kickSfx() { snd('square', 0.07, 320, 220); }
-function goalSfx()  { snd('square', 0.12, 520, 660); setTimeout(function(){ snd('square', 0.16, 784, 988); }, 120); }
+// 噪声打底：撞墙/手套/身体接触
+function noiseBurst(cutoff, dur, vol, type) {
+  var a = ac(); if (!a || !NOISE) return;
+  try {
+    var s = a.createBufferSource(); s.buffer = NOISE;
+    var f = a.createBiquadFilter(); f.type = type || 'lowpass'; f.frequency.value = cutoff;
+    var g = a.createGain();
+    g.gain.setValueAtTime(vol, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
+    s.connect(f); f.connect(g); g.connect(a.destination);
+    s.start(); s.stop(a.currentTime + dur + 0.02);
+  } catch (e) {}
+}
+// 踢球：低频"砰" + 皮革脆响
+function kickSfx() {
+  var a = ac(); if (!a) return;
+  try {
+    var o = a.createOscillator(), g = a.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(160, a.currentTime);
+    o.frequency.exponentialRampToValueAtTime(55, a.currentTime + 0.09);
+    g.gain.setValueAtTime(0.22, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + 0.11);
+    o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.12);
+  } catch (e) {}
+  noiseBurst(1400, 0.06, 0.05);
+}
+// 裁判哨：2.3kHz 方波带颤音
+function whistleSfx(dur) {
+  var a = ac(); if (!a) return;
+  try {
+    var o = a.createOscillator(), g = a.createGain(), l = a.createOscillator(), lg = a.createGain();
+    o.type = 'square'; o.frequency.value = 2300;
+    l.frequency.value = 28; lg.gain.value = 260;
+    l.connect(lg); lg.connect(o.frequency);
+    g.gain.setValueAtTime(0.0001, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.05, a.currentTime + 0.02);
+    g.gain.setValueAtTime(0.05, a.currentTime + Math.max(0.03, dur - 0.03));
+    g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + dur);
+    o.connect(g); g.connect(a.destination);
+    o.start(); l.start(); o.stop(a.currentTime + dur); l.stop(a.currentTime + dur);
+  } catch (e) {}
+}
+// 进球：长哨 + 人群欢呼（带通噪声涌动）
+function goalSfx() {
+  whistleSfx(0.45);
+  var a = ac(); if (!a || !NOISE) return;
+  try {
+    var s = a.createBufferSource(); s.buffer = NOISE; s.loop = true;
+    var f = a.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 700; f.Q.value = 0.6;
+    var g = a.createGain();
+    g.gain.setValueAtTime(0.0001, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.09, a.currentTime + 0.25);
+    g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + 1.6);
+    s.connect(f); f.connect(g); g.connect(a.destination);
+    s.start(); s.stop(a.currentTime + 1.7);
+  } catch (e) {}
+}
+// 门将接球闷响 / 扑球风声
+function catchSfx() { noiseBurst(700, 0.13, 0.12); }
+function diveSfx()  { noiseBurst(500, 0.16, 0.07, 'bandpass'); }
 
 // ---------- 数学工具 ----------
 function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
@@ -679,7 +751,6 @@ function postForShot(p) {
 }
 
 // ---------- 门将 AI（站门 / 扑救在 stepBall 里做 / 拿球后开球分边） ----------
-function catchSfx() { snd('sine', 0.13, 150, 90, 0.06); }
 function aiKeeper(p, dt) {
   var box = boxOf(p.team);
   var g = enemyGoalOf(p.team);
@@ -864,7 +935,7 @@ function stepBall(dt) {
       gk2.diveT = 0.75;                          // 0.35s 扑出 + 0.4s 缓慢恢复
       gk2.diveDir = b.x >= gk2.x ? 1 : -1;
       gk2.vx = gk2.diveDir * 170;                // 身体朝球那一侧扑出去（一点点，不夸张）
-      snd('sine', 0.12, 240, 130, 0.05);         // 扑球风声
+      diveSfx();                                  // 扑球风声
     }
   }
 
@@ -904,14 +975,14 @@ function stepBall(dt) {
   // 上边（AI 守的门 = 玩家攻的门）
   if (b.y - b.r < TY) {
     if (Math.abs(b.x - CX) < GOAL_HALF) goalFor(0);
-    else { b.y = TY + b.r; b.vy = -b.vy * 0.55; }
+    else { b.y = TY + b.r; b.vy = -b.vy * 0.55; noiseBurst(900, 0.05, 0.05); }
   }
   if (b.y + b.r > BY) {
     if (Math.abs(b.x - CX) < GOAL_HALF) goalFor(1);
-    else { b.y = BY - b.r; b.vy = -b.vy * 0.55; }
+    else { b.y = BY - b.r; b.vy = -b.vy * 0.55; noiseBurst(900, 0.05, 0.05); }
   }
-  if (b.x - b.r < LX) { b.x = LX + b.r; b.vx = -b.vx * 0.55; }
-  if (b.x + b.r > RX) { b.x = RX - b.r; b.vx = -b.vx * 0.55; }
+  if (b.x - b.r < LX) { b.x = LX + b.r; b.vx = -b.vx * 0.55; noiseBurst(900, 0.05, 0.04); }
+  if (b.x + b.r > RX) { b.x = RX - b.r; b.vx = -b.vx * 0.55; noiseBurst(900, 0.05, 0.04); }
 }
 function goalFor(team) {                     // team = 进球的队伍编号（0阿根廷/1西班牙）
   if (state !== 'play') return;
@@ -1401,7 +1472,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v4.1.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v4.2.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
