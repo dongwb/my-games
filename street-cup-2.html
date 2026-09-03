@@ -19,11 +19,12 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.1.0
+   街头萌战 2 STREET CUP 2 · v2.1.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
           前锋不抢球，中圈等反击
+   v2.1.1：修开球前锋站桩——球在中圈/对方半场无主时前锋要去抢
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -225,6 +226,16 @@ function nearestDefenderOfTeam(x, y, team) {   // 只有后卫（slot 0/1）负�
   }
   return b;
 }
+function nearestForwardOfTeam(x, y, team) {   // 前锋（slot 3/4）
+  var b = null, bd = 1e9;
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    if (p.team !== team || p.isGK || p.slot < 3) continue;
+    var d = dist2(p.x, p.y, x, y);
+    if (d < bd) { bd = d; b = p; }
+  }
+  return b;
+}
 function pickChaser(team) {
   var n = nearestDefenderOfTeam(ball.x, ball.y, team);
   var cur = chaserOf[team];
@@ -376,8 +387,15 @@ function aiThink(p, dt) {
     }
     return;
   }
-  // —— 无主球：前锋不回头抢；后卫谁近谁去，另一个守线 ——
-  if (p.slot >= 3) { waitForCounter(p, dt); return; }
+  // —— 无主球：球在本方半场，前锋不回头；球在中圈/对方半场，最近的前锋去抢 ——
+  if (p.slot >= 3) {
+    if (!inOurHalf(p.team) && nearestForwardOfTeam(ball.x, ball.y, p.team) === p) {
+      aiSteer(p, ball.x, ball.y, 190, dt);       // 开球争球/前场反抢
+    } else {
+      waitForCounter(p, dt);
+    }
+    return;
+  }
   if (nearestDefenderOfTeam(ball.x, ball.y, p.team) === p) {
     aiSteer(p, ball.x, ball.y, 190, dt);
   } else {
@@ -1100,7 +1118,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.1.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.1.1', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
