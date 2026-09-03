@@ -15,11 +15,11 @@
 <body>
 <div id="wrap">
   <canvas id="cv" width="1080" height="1440"></canvas>
-  <div id="hint">5v5 · 主菜单：<b>A</b> 阿根廷 / <b>S</b> 西班牙 · <b>Enter</b> 开球 &nbsp;|&nbsp; 比赛中：<b>方向键/WASD</b> 跑动 · <b>空格</b> 传球/射门 · 过半场<b>按住空格</b>蓄力射门</div>
+  <div id="hint">5v5 · 主菜单：<b>A</b> 阿根廷 / <b>S</b> 西班牙 · <b>Enter</b> 开球 &nbsp;|&nbsp; 比赛中：<b>方向键/WASD</b> 跑动 · <b>空格</b> 射门 · 过半场<b>按住空格</b>蓄力 · <b>Shift</b> 传球</div>
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.3.1
+   街头萌战 2 STREET CUP 2 · v2.4.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -31,6 +31,7 @@
    v2.2.2：修门将死循环——对方不再堵门（回去防守）/ 大脚改开边路
    v2.3.0：赛后技术统计——比分/控球率/传球/射门/扑救 五维表格
    v2.3.1：修真·堵门（回防公式用错把人推向球）/ 门将传球前查线路
+   v2.4.0：传射分离——空格=射门（过半场蓄力），Shift=传球
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -71,7 +72,8 @@ var ctrl = null;               // 本帧玩家真正操控的人
 var ctrlAge = 99;              // 距上次换人过了几秒（防频繁切换）
 var preferCtrl = null;         // 传球瞬间锁定的接球人（短暂优先操控他）
 var preferT = 0;               // preferCtrl 的有效倒计时
-var prevSpace = false;         // 空格按下沿检测
+var prevSpace = false;         // 空格按下沿检测（射门）
+var prevShift = false;         // Shift 按下沿检测（传球）
 var charging = false;          // 正在蓄力射门
 var charge = 0;                // 蓄力进度 0~1（1 秒蓄满）
 var lastKickTeam = -1;         // 球最后是被哪一队踢的（传球/射门归属）
@@ -498,9 +500,8 @@ function kickToward(p, tx, ty, sp, kind) {
   kickSfx();
 }
 
-// 人类按空格：优先传"面朝方向"里的空位队友；没人就射门（带左右方向=打角度）
-function humanKick(p) {
-  var g = enemyGoalOf(p.team);
+// Shift = 传球：朝"面朝方向"找最合适的队友；找不到就不出脚（绝不误射）
+function passTeammate(p) {
   var best = null, bestDot = 0.55;
   for (var i = 0; i < players.length; i++) {
     var t = players[i];
@@ -515,10 +516,12 @@ function humanKick(p) {
     // 传球 = 瞄准队友"这一瞬"的位置直线传出，之后双方怎么动都不改轨迹
     kickToward(p, best.x, best.y, 420);
     preferCtrl = best; preferT = 0.9;          // 锁定接球人，传球路上就能接管
-  } else {
-    kickToward(p, postForShot(p), g.y, 760, 'shot');   // 朝门柱内侧打，别总踢中路喂门将
-    preferCtrl = null; preferT = 0;            // 射门不锁人
   }
+}
+// 空格（本方半场）= 直接射门：朝门柱内侧打
+function shootNow(p) {
+  kickToward(p, postForShot(p), enemyGoalOf(p.team).y, 760, 'shot');
+  preferCtrl = null; preferT = 0;
 }
 // 射门目标：顺着你面朝方向打近/远角；直直冲门时自动打门将另一侧空角
 function postForShot(p) {
@@ -896,8 +899,8 @@ function update(dt) {
   if (state !== 'play') return;
   settleBall();
 
-  // 空格：本方半场按下=传球/射门；过了半场按住=蓄力射门，松开（或蓄满）出脚
-  var spNow = !!KEYS[' '];
+  // 空格=射门（过了半场按住蓄力，松开/蓄满出脚）；Shift=传球
+  var spNow = !!KEYS[' '], shNow = !!KEYS['shift'];
   var ow = ball.owner;
   if (charging) {
     charge = Math.min(1, charge + dt / 1.0);   // 1 秒蓄满
@@ -908,11 +911,14 @@ function update(dt) {
     } else if (charge >= 1) {
       humanShoot(ow, 1); charging = false; charge = 0;   // 蓄满自动射（会偏）
     }
-  } else if (spNow && !prevSpace && ow && ow.team === pickIdx && !ow.isGK) {
-    if (inOpponentHalf(ow)) { charging = true; charge = 0; }
-    else humanKick(ow);
+  } else if (ow && ow.team === pickIdx && !ow.isGK) {
+    if (spNow && !prevSpace) {
+      if (inOpponentHalf(ow)) { charging = true; charge = 0; }
+      else shootNow(ow);                          // 本方半场按下=直接来一脚
+    }
+    if (shNow && !prevShift) passTeammate(ow);    // Shift=传球
   }
-  prevSpace = spNow;
+  prevSpace = spNow; prevShift = shNow;
 }
 
 function endMatch() {
@@ -1158,7 +1164,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.3.1', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.4.0', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
@@ -1176,7 +1182,7 @@ function drawMenu() {
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
   ctx.fillText('按 A / S 选队 · Enter 开球', CX, py + 40);
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
-  ctx.fillText('方向键/WASD 跑动 · 空格 传球/射门（带左右方向=打角度骗门将）', CX, py + 75);
+  ctx.fillText('方向键/WASD 跑动 · Shift 传球 · 空格射门（过半场按住蓄力）', CX, py + 75);
   ctx.fillText('门将 AI 自动站位扑救，接稳后会开球分给队友 · 贴身=断球夺权', CX, py + 98);
 }
 function drawChibiPreview(p) {
