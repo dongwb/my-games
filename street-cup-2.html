@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.5.0
+   街头萌战 2 STREET CUP 2 · v2.5.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -34,6 +34,7 @@
    v2.4.0：传射分离——空格=射门（过半场蓄力），Shift=传球
    v2.4.1：取消过半场限制——空格全场皆可蓄力射门
    v2.5.0：传球键 Shift→V；传球也上蓄力（轻/正好/太冲接不住），AI 同样
+   v2.5.1：传球力度整体上调约 20%（280/420/560+ → 340/500/640+）
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -502,7 +503,7 @@ function kickToward(p, tx, ty, sp, kind) {
 
 // 蓄力档 → 传球速度：<35% 轻 / 35~70% 正好 / 70~100% 很冲（队友可能停不住）
 function passPowerSpeed(pc) {
-  return pc < 0.35 ? 280 : (pc < 0.7 ? 420 : 560 + (pc - 0.7) / 0.3 * 160);
+  return pc < 0.35 ? 340 : (pc < 0.7 ? 500 : 640 + (pc - 0.7) / 0.3 * 180);
 }
 // V = 传球（按住蓄力）：朝"面朝方向"找最合适的队友；找不到就不出脚（绝不误射）
 function passTeammate(p, pc) {
@@ -1163,7 +1164,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.5.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.5.1', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
