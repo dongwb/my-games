@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.5.3
+   街头萌战 2 STREET CUP 2 · v2.5.4
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -37,6 +37,8 @@
    v2.5.1：传球力度整体上调约 20%（280/420/560+ → 340/500/640+）
    v2.5.2：传球思路——线路被堵自动换队友（两轮找人）/ 接球半径收紧防吸附
    v2.5.3：传球键 V→C；修开局"假传"——第二轮找人不限方向（可回传）
+   v2.5.4：传球去智能化——不再换目标，永远朝队友传（优先面朝方向，
+          兜底传最近的），修"直接传给对面"
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -509,21 +511,28 @@ function passPowerSpeed(pc) {
 }
 // V = 传球（按住蓄力）：朝"面朝方向"找最合适的队友；找不到就不出脚（绝不误射）
 function passTeammate(p, pc) {
-  // 两轮找人：先找"面朝方向"的；没有线路干净的，就放宽到全场方向
-  var best = null, bestDot = 0;
-  for (var round = 0; round < 2 && !best; round++) {
-    var needDot = round === 0 ? 0.55 : -1;      // 第二轮不限方向，回传也合法
-    for (var i = 0; i < players.length; i++) {
-      var t = players[i];
+  // 简单可靠：永远朝着队友传——优先面朝方向最合适的；实在没有就传最近的队友
+  var best = null, bestDot = 0.45;
+  var i, t;
+  for (i = 0; i < players.length; i++) {
+    t = players[i];
+    if (t.team !== p.team || t === p || t.isGK) continue;
+    var dx = t.x - p.x, dy = t.y - p.y, d = vlen(dx, dy);
+    if (d < 60 || d > 560) continue;
+    var dot = (dx / d) * p.face.x + (dy / d) * p.face.y;
+    var th = nearestEnemyOf(t);
+    if (dot > bestDot && (!th.p || th.d > 40)) { bestDot = dot; best = t; }
+  }
+  if (!best) {
+    var bd = 1e9;                                 // 兜底：传给最近的没被贴死的队友
+    for (i = 0; i < players.length; i++) {
+      t = players[i];
       if (t.team !== p.team || t === p || t.isGK) continue;
-      var dx = t.x - p.x, dy = t.y - p.y, d = vlen(dx, dy);
-      if (d < 60 || d > 560) continue;
-      var dot = (dx / d) * p.face.x + (dy / d) * p.face.y;
-      if (dot < needDot) continue;
-      var th = nearestEnemyOf(t);
-      if (th.p && th.d <= 40) continue;          // 人被贴死，不传
-      if (!laneClear(p, t, p.team)) continue;    // 传球线路上有对方球员挡着，换人
-      if (dot > bestDot) { bestDot = dot; best = t; }
+      var d2 = dist2(p.x, p.y, t.x, t.y);
+      if (d2 < 60 * 60) continue;
+      var th2 = nearestEnemyOf(t);
+      if (th2.p && th2.d <= 40) continue;
+      if (d2 < bd) { bd = d2; best = t; }
     }
   }
   if (best) {
@@ -1173,7 +1182,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.5.3', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.5.4', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
