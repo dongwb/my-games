@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.12.0
+   街头萌战 2 STREET CUP 2 · v2.12.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -53,6 +53,7 @@
    v2.11.0：菜单加"对手"设置（指定/随机）+ 开球权随机猜边
    v2.12.0：进球后由被进球方开球；开球必须先传球（开球人钉住，
           只能按 C 传出，AI 开球立刻横传）
+   v2.12.1：开球传出前全员冻结；拖延开球 10s 警告 3s，再不开判对方胜
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -104,6 +105,7 @@ var oppIdx = 1;                // AI 对手的队伍（本局的实际对手）
 var oppSel = -1;               // 菜单里选的对手：-1=随机，否则指定
 var menuRow = 0;               // 菜单当前设置行：0=你的队，1=对手
 var kickSide = -1;             // 本次开球权在谁（0=你侧 1=AI侧）
+var kickWaitT = 0;             // 开球拖延计时（10s 警告，13s 判负）
 var players = [], ball = null;
 var scores = [0, 0];           // [玩家队, AI队]
 var clock = 120, goalFlash = 0, goalSide = -1, goalTeam = -1, readyT = 0;
@@ -247,6 +249,7 @@ function setupPositions(kickTeam) {
     if (p.team === 0 && !p.isGK && p.slot === 3) ctrl = p;
   }
   kickSide = (kickTeam === 0 || kickTeam === 1) ? kickTeam : -1;
+  kickWaitT = 0;
   // 开球权（随机一方）：该队左前锋站到球点，球在脚下
   if (kickTeam === 0 || kickTeam === 1) {
     for (var k = 0; k < players.length; k++) {
@@ -970,10 +973,17 @@ function update(dt) {
   if (nCtrl !== ctrl) ctrlAge = 0;
   ctrl = nCtrl;
 
+  // 开球未传出前：全员冻结（规则）；拖延 10s 警告、13s 直接判对方胜
+  var frozen = !!ball.mustPass;
+  if (frozen) {
+    kickWaitT += dt;
+    if (kickWaitT > 13) { winner = kickSide === 0 ? 1 : 0; state = 'over'; return; }
+  }
   var i, p;
   for (i = 0; i < players.length; i++) {
     p = players[i];
-    if (p === ctrl) humanMove(p, dt);
+    if (frozen) { p.vx = 0; p.vy = 0; p.moving = false; }
+    else if (p === ctrl) humanMove(p, dt);
     else aiThink(p, dt);
     p.x += p.vx * dt; p.y += p.vy * dt;
     p.x = clamp(p.x, LX + p.r, RX - p.r);
@@ -1246,9 +1256,20 @@ function drawAim() {
 }
 // 开球必须传球的头顶提示
 function drawMustPass() {
-  if (state !== 'play' || !ball.mustPass || !ball.owner || ball.owner.team !== 0) return;
-  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
-  ctx.fillText('按 C 传出去！', ball.owner.x, ball.owner.y - 56);
+  if (state !== 'play' || !ball.mustPass || !ball.owner) return;
+  if (ball.owner.team === 0) {
+    ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('按 C 传出去！', ball.owner.x, ball.owner.y - 56);
+  }
+  // 拖延警告：10 秒没开球，最后 3 秒倒数，再不开判对方胜
+  if (kickWaitT > 10) {
+    var left = Math.ceil(13 - kickWaitT);
+    var blinkOn = Math.floor(kickWaitT * 4) % 2 === 0;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillStyle = blinkOn ? '#ff5c5c' : '#ffb0a0';
+    ctx.fillText('⚠️ 再不开球判负！' + left, CX, (TY + BY) / 2 - 140);
+  }
 }
 function drawCharge() {
   var val = charging ? charge : (pCharging ? pCharge : -1);   // 射门/传球共用一条
@@ -1325,7 +1346,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v2.12.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v2.12.1', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
