@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.7.0
+   街头萌战 2 STREET CUP 2 · v2.8.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -43,6 +43,8 @@
           脱手球物理滑落成无主球，双方拼抢
    v2.6.1：蓄力条 1s → 0.5s（射门/传球同步），减少被断窗口
    ——— 里程碑版本 v2.7.0：队魂/脱手/双蓄力 手感定稿 ———
+   v2.8.0：自由瞄准射门——蓄力时 ←/→ 连续转瞄准线（±45°），
+          绿区指哪打哪，红区按偏移角射偏
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -88,6 +90,7 @@ var prevC = false;             // C 按下沿检测（传球）
 var pCharging = false;         // 正在蓄力传球
 var pCharge = 0;               // 传球蓄力进度 0~1（0.5 秒蓄满）
 var charging = false;          // 正在蓄力射门
+var aimOff = 0;                // 射门瞄准偏移（弧度，±0.8，蓄力时 ←/→ 转动）
 var charge = 0;                // 蓄力进度 0~1（0.5 秒蓄满）
 var lastKickTeam = -1;         // 球最后是被哪一队踢的（传球/射门归属）
 var stats = null;                // 全场技术统计：传球/射门/扑救/控球时长
@@ -286,8 +289,18 @@ function humanMove(p, dt) {
   if ((charging || pCharging) && ball.owner === p) {
     p.vx *= 0.8; p.vy *= 0.8; p.moving = false;
     var gg = enemyGoalOf(p.team);
-    var gx = gg.x - p.x, gy2 = gg.y - p.y, gm = vlen(gx, gy2) || 1;
-    p.face.x = gx / gm; p.face.y = gy2 / gm;
+    if (charging) {
+      // 蓄力中 ←/→ 转动瞄准方向（±45°），面朝瞄准线
+      var aDir = p.team === 0 ? 1 : -1;              // 屏幕左=向左瞄，两队自适应
+      if (KEYS['arrowleft']  || KEYS['a']) aimOff -= aDir * dt * 2.2;
+      if (KEYS['arrowright'] || KEYS['d']) aimOff += aDir * dt * 2.2;
+      aimOff = clamp(aimOff, -0.8, 0.8);
+      var ang = Math.atan2(gg.y - p.y, gg.x - p.x) + aimOff;
+      p.face.x = Math.cos(ang); p.face.y = Math.sin(ang);
+    } else {
+      var gx = gg.x - p.x, gy2 = gg.y - p.y, gm = vlen(gx, gy2) || 1;
+      p.face.x = gx / gm; p.face.y = gy2 / gm;
+    }
     return;
   }
   var dx = 0, dy = 0;
@@ -694,20 +707,21 @@ function keeperCanCatch() {
 // <35% 软弱无力（门将好扑）/ 35%~70% 正常 / 70%~100% 更快但会射偏（100% 自动出脚）
 function humanShoot(p, ch) {
   var g = enemyGoalOf(p.team);
-  var aimX = postForShot(p), sp;
+  var ang = Math.atan2(g.y - p.y, g.x - p.x) + aimOff;   // 瞄准线 = 你转出来的方向
+  var sp;
   if (ch >= 0.7) {
     sp = 880;
-    var off = (ch - 0.7) / 0.3;                                 // 越满偏越多
-    aimX += (Math.random() < 0.5 ? -1 : 1) * (25 + off * 75);   // 蓄过头，脚法变形
-    aimX = clamp(aimX, CX - GOAL_HALF - 32, CX + GOAL_HALF + 32);          // 可能擦柱甚至射飞
+    var off = (ch - 0.7) / 0.3;                          // 红区：越满偏越多
+    ang += (Math.random() * 2 - 1) * (0.05 + off * 0.14);
   } else if (ch < 0.35) {
     sp = 400;
   } else {
-    sp = 760;
+    sp = 760;                                            // 绿区：指哪打哪
   }
-  kickToward(p, aimX, g.y, sp, 'shot');
+  kickToward(p, p.x + Math.cos(ang) * 500, p.y + Math.sin(ang) * 500, sp, 'shot');
   ball.shotCharge = ch;              // 人类射门：带真实蓄力值
   preferCtrl = null; preferT = 0;
+  aimOff = 0;
 }
 
 // ---------- 球 ----------
@@ -944,7 +958,7 @@ function update(dt) {
   var spNow = !!KEYS[' '], cNow = !!KEYS['c'];
   var ow = ball.owner;
   var mine = ow && ow.team === pickIdx && !ow.isGK;
-  if (!charging && mine && spNow && !prevSpace) { charging = true; charge = 0; }
+  if (!charging && mine && spNow && !prevSpace) { charging = true; charge = 0; aimOff = 0; }
   if (!pCharging && mine && cNow && !prevC) { pCharging = true; pCharge = 0; }
   if (charging) {
     charge = Math.min(1, charge + dt * 2);       // 0.5 秒蓄满
@@ -1134,6 +1148,18 @@ function drawChibi(p) {
   }
 }
 // 蓄力条：头顶一条，蓝=太软 / 绿=正好 / 红=会射偏；白线是 35% 和 70% 两条分界
+// 蓄力瞄准线：虚线指向出脚方向
+function drawAim() {
+  if (!charging || !ctrl || state !== 'play') return;
+  var g = enemyGoalOf(ctrl.team);
+  var ang = Math.atan2(g.y - ctrl.y, g.x - ctrl.x) + aimOff;
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)'; ctx.lineWidth = 2.5;
+  ctx.setLineDash([8, 7]);
+  ctx.beginPath(); ctx.moveTo(ctrl.x, ctrl.y);
+  ctx.lineTo(ctrl.x + Math.cos(ang) * 260, ctrl.y + Math.sin(ang) * 260);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
 function drawCharge() {
   var val = charging ? charge : (pCharging ? pCharge : -1);   // 射门/传球共用一条
   if (val < 0 || !ctrl || state !== 'play') return;
@@ -1205,7 +1231,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.7.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.8.0', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
@@ -1292,6 +1318,7 @@ function draw() {
   var list = players.slice().sort(function (a, b) { return a.y - b.y; });
   for (var i = 0; i < list.length; i++) drawChibi(list[i]);
   drawBall();
+  drawAim();
   drawCharge();
   drawHUD();
   if (state === 'play' || state === 'kickoff') drawFlash();
