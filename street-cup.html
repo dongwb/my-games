@@ -18,7 +18,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 STREET CUP · v1.1.4
+   街头萌战 STREET CUP · v1.1.5
    3v3（含门将）街头 · 共用 AI 大脑 + 换皮肤
    ——— 首个正式发布版 v1.0.0 ———
    v1.0.1：门将提速（0.75→0.95）/ 修"磁吸手套"（扑救半径 58→35px）
@@ -35,6 +35,7 @@
    v1.1.2：射偏区改为 70%~100%（红区），越满偏越多；35%~70% 绿区才准
    v1.1.3：门将出击——球慢速停在禁区且自己明显更近时，主动上去拿球
    v1.1.4：门将侧扑动作——球飞来时倒地扑向球侧，扑球时手套范围 +16
+   v1.1.5：侧扑手感——扑出冲量保留 0.35s 有位移感，全程 0.75s 缓慢恢复
    v0.2.x：抢断直接夺权 / 控制权迟滞 / 传球锁接球人
    v0.3.0：新增门将——每队3人中1人站门：禁区、扑救、开球分边
           全员移动速度减半 / 抢断判定放宽到贴身即可触发
@@ -481,11 +482,15 @@ function aiKeeper(p, dt) {
   var box = boxOf(p.team);
   var g = enemyGoalOf(p.team);
 
-  // 侧扑中：身体甩出去，短暂无法控制（扑到球则转入抱球流程）
+  // 侧扑中：前 0.35s 保持扑出的冲量（身体真的甩向球侧），之后 0.4s 缓慢恢复
   if (p.diveT > 0) {
     p.diveT -= dt;
     p.face.x = p.diveDir; p.face.y = 0;
-    if (ball.owner !== p) { aiSteer(p, p.x, p.y, 30, dt); return; }
+    if (ball.owner !== p) {
+      if (p.diveT > 0.4) { p.vx *= (1 - dt * 2); p.vy *= (1 - dt * 2); }
+      else aiSteer(p, p.x, p.y, 30, dt);
+      return;
+    }
   }
 
   // 门将拿住球：先抱稳观察，禁区内还有对方球员就不传（等他们退出去）；
@@ -581,7 +586,7 @@ function keeperCanCatch() {
     if (ball.y < box.loY || ball.y > box.hiY) continue;
     var towardGoal = p.team === 0 ? ball.vy > 60 : ball.vy < -60;
     if (!towardGoal) continue;
-    var reach = p.r + ball.r + GK_REACH + (p.diveT > 0 ? 16 : 0);   // 扑出去时手套范围更大
+    var reach = p.r + ball.r + GK_REACH + (p.diveT > 0.4 ? 16 : 0);   // 扑出瞬间手套范围更大
     if (dist2(p.x, p.y, ball.x, ball.y) < reach * reach) return p;
   }
   return null;
@@ -636,9 +641,9 @@ function stepBall(dt) {
     var spg = vlen(b.vx, b.vy);
     var toward2 = gk2.team === 0 ? b.vy > 60 : b.vy < -60;
     if (spg > 220 && toward2 && dist2(gk2.x, gk2.y, b.x, b.y) < 120 * 120) {
-      gk2.diveT = 0.5;
+      gk2.diveT = 0.75;                          // 0.35s 扑出 + 0.4s 缓慢恢复
       gk2.diveDir = b.x >= gk2.x ? 1 : -1;
-      gk2.vx = gk2.diveDir * 130;                // 身体朝球那一侧甩出去
+      gk2.vx = gk2.diveDir * 170;                // 身体朝球那一侧扑出去（一点点，不夸张）
       snd('sine', 0.12, 240, 130, 0.05);         // 扑球风声
     }
   }
@@ -912,9 +917,9 @@ function drawChibi(p) {
   ctx.save();
   ctx.translate(p.x, p.y);
 
-  // 门将侧扑：整个人倒向球场（朝球那一侧倾倒 ~75°，快速倒下缓慢起身）
+  // 门将侧扑：快速倒下（0.3s）→ 缓慢起身恢复（0.45s），整个人倒向球那一侧
   if (p.diveT > 0) {
-    var dp = Math.min(1, (0.5 - p.diveT) * 5);
+    var dp = p.diveT > 0.45 ? (0.75 - p.diveT) / 0.3 : p.diveT / 0.45;
     ctx.rotate(p.diveDir * 1.3 * dp);
     ctx.translate(0, 3 * dp);
   }
@@ -1064,7 +1069,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP · 3v3（含门将）街头足球', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.1.4', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v1.1.5', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
