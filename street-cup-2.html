@@ -15,11 +15,11 @@
 <body>
 <div id="wrap">
   <canvas id="cv" width="1080" height="1440"></canvas>
-  <div id="hint">5v5 · 主菜单：<b>A</b> 阿根廷 / <b>S</b> 西班牙 · <b>Enter</b> 开球 &nbsp;|&nbsp; 比赛中：<b>方向键/WASD</b> 跑动 · <b>空格</b> 蓄力射门 · <b>C</b> 蓄力传球</div>
+  <div id="hint">5v5 · 主菜单：<b>A/D</b> 换队 · <b>Enter</b> 开球（对手随机） &nbsp;|&nbsp; 比赛中：<b>方向键/WASD</b> 跑动 · <b>空格</b> 蓄力射门 · <b>C</b> 蓄力传球</div>
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.9.0
+   街头萌战 2 STREET CUP 2 · v2.10.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -49,6 +49,8 @@
           红区偏移角收敛——满力脱手战术可控了
    v2.8.2：红区偏角调回 ±11°（可操控后满力不能几乎必进）
    ——— 里程碑版本 v2.9.0：射门系统定稿（自由瞄准+三档蓄力+脱手） ———
+   v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡)，
+          每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -65,22 +67,36 @@ var GK_REACH = 10;             // 门将手套够得着的余量（别太大，�
 // ---------- 队伍数据 ----------
 var TEAMS = [
   { id:'ARG', name:'阿根廷', jersey:'#FFFFFF', stripe:'#75AADB', collar:'#0C2340',
-    shorts:'#0C2340', socks:'#75AADB', gk:'#22c3ac' },
+    shorts:'#0C2340', socks:'#75AADB', gk:'#22c3ac', desc:'主色 白×天蓝' },
   { id:'ESP', name:'西班牙', jersey:'#AA151B', stripe:'#F1BF00', collar:'#0C2340',
-    shorts:'#0C2340', socks:'#AA151B', gk:'#ffad1f' }
+    shorts:'#0C2340', socks:'#AA151B', gk:'#ffad1f', desc:'主色 深红×海军蓝肩' },
+  { id:'BRA', name:'巴西', jersey:'#FFDF00', stripe:'#009739', collar:'#009739',
+    shorts:'#002776', socks:'#FFFFFF', gk:'#8e44ad', desc:'主色 黄×蓝裤' },
+  { id:'NED', name:'荷兰', jersey:'#FF6A00', stripe:'#FFFFFF', collar:'#FFFFFF',
+    shorts:'#FF6A00', socks:'#FF6A00', gk:'#1a7a4a', desc:'主色 全橙' },
+  { id:'FRA', name:'法国', jersey:'#0055A4', stripe:'#C8102E', collar:'#FFFFFF',
+    shorts:'#FFFFFF', socks:'#C8102E', gk:'#e8c832', desc:'主色 深蓝×白裤' }
 ];
 
 // ---------- 队魂：两队同骨架，风格参数分叉 ----------
 // pressD=被逼多近才传 shotR=AI起脚距离 supportK=接应距离系数
 // waitY=前锋等反击的纵深(+靠后/-压上) defDepth=防线纵深区间 outletFwd=开球找前锋加成
 var SOUL = [
-  { pressD: 50, shotR: 430, supportK: 1.0,  waitY: -90, defDepth: [0.18, 0.55], outletFwd: 120 },  // 阿根廷：防反
-  { pressD: 88, shotR: 350, supportK: 0.72, waitY: 60,  defDepth: [0.35, 0.85], outletFwd: 0 }     // 西班牙：控球
+  { label:'防守反击 · 长传找前锋', pressD: 50, shotR: 430, supportK: 1.0,  waitY: -90, defDepth: [0.18, 0.55], outletFwd: 120, chaseSpd: 1.0  },  // 阿根廷
+  { label:'控球倒脚 · 短传渗透',   pressD: 88, shotR: 350, supportK: 0.72, waitY: 60,  defDepth: [0.35, 0.85], outletFwd: 0,   chaseSpd: 1.0  },  // 西班牙
+  { label:'技术流 · 敢带敢突',     pressD: 95, shotR: 400, supportK: 0.8,  waitY: -30, defDepth: [0.28, 0.75], outletFwd: 60,  chaseSpd: 1.0  },  // 巴西
+  { label:'高压逼抢 · 全场飞奔',   pressD: 70, shotR: 380, supportK: 0.9,  waitY: 0,   defDepth: [0.4, 0.9],   outletFwd: 40,  chaseSpd: 1.18 },  // 荷兰
+  { label:'均衡 · 能攻善守',       pressD: 70, shotR: 390, supportK: 0.9,  waitY: -20, defDepth: [0.28, 0.7],  outletFwd: 60,  chaseSpd: 1.05 }   // 法国
 ];
+// 内部编号：0=你这侧（守下方门）1=AI 侧；球衣/队魂由 pickIdx/oppIdx 映射
+function kitIndexOf(side) { return side === 0 ? pickIdx : oppIdx; }
+function kitOf(side)  { return TEAMS[kitIndexOf(side)]; }
+function soulOf(side) { return SOUL[kitIndexOf(side)]; }
 
 // ---------- 状态 ----------
 var state = 'menu';            // menu | kickoff | play | over
-var pickIdx = 0;               // 玩家队
+var pickIdx = 0;               // 玩家选择的队伍（球衣/队魂索引）
+var oppIdx = 1;                // AI 对手的队伍（开球时随机，≠ pickIdx）
 var players = [], ball = null;
 var scores = [0, 0];           // [玩家队, AI队]
 var clock = 120, goalFlash = 0, goalSide = -1, goalTeam = -1, readyT = 0;
@@ -107,8 +123,8 @@ addEventListener('keydown', function (e) {
   if (e.repeat) return;
   KEYS[k] = true;
   if (state === 'menu') {
-    if (k === 'a') pickIdx = 0;
-    if (k === 's') pickIdx = 1;
+    if (k === 'a' || k === 'arrowleft')  pickIdx = (pickIdx + TEAMS.length - 1) % TEAMS.length;
+    if (k === 'd' || k === 'arrowright') pickIdx = (pickIdx + 1) % TEAMS.length;
     if (k === 'enter') { snd('whistle', 0.18, 1.0); startMatch(); }
   } else if (state === 'over') {
     if (k === ' ' || k === 'enter') { state = 'menu'; scores = [0, 0]; }
@@ -171,6 +187,7 @@ function newStats() { return [{ pass: 0, shot: 0, save: 0, poss: 0 }, { pass: 0,
 function startMatch() {
   scores = [0, 0]; clock = 120; winner = null; lastKickTeam = -1;
   stats = newStats();
+  do { oppIdx = Math.floor(Math.random() * TEAMS.length); } while (oppIdx === pickIdx);
   chaserOf = [null, null]; ctrlAge = 99;
   players = [];
   ball = { x: CX, y: (TY + BY) / 2, vx: 0, vy: 0, r: 9, owner: null, free: 0 };
@@ -205,7 +222,7 @@ function setupPositions() {
     p.vx = p.vy = 0; p.gkHold = 0; p.diveT = 0;
     p.face.x = 0; p.face.y = p.team === 0 ? -1 : 1;
     // 倒计时阶段把箭头交给玩家队左前锋，开球即冲刺
-    if (p.team === pickIdx && !p.isGK && p.slot === 3) ctrl = p;
+    if (p.team === 0 && !p.isGK && p.slot === 3) ctrl = p;
   }
 }
 
@@ -213,12 +230,12 @@ function setupPositions() {
 function controlledPlayer() {
   if (!ball) return null;
   // 我队场上球员拿球才接管；门将拿球交给 AI 开球，不抢你控制
-  if (ball.owner && ball.owner.team === pickIdx && !ball.owner.isGK) return ball.owner;
+  if (ball.owner && ball.owner.team === 0 && !ball.owner.isGK) return ball.owner;
   // 刚传出去的球：优先操控接球人，可以直接迎球跑位
-  if (preferCtrl && preferT > 0 && !ball.owner && preferCtrl.team === pickIdx && !preferCtrl.isGK) return preferCtrl;
-  var n = nearestFieldOfTeam(ball.x, ball.y, pickIdx);
+  if (preferCtrl && preferT > 0 && !ball.owner && preferCtrl.team === 0 && !preferCtrl.isGK) return preferCtrl;
+  var n = nearestFieldOfTeam(ball.x, ball.y, 0);
   // 迟滞：球没人拿时，除非另一个人明显更近（近 1/3 以上），否则不换人
-  if (ctrl && ctrl.team === pickIdx && ctrl !== n && !ctrl.isGK) {
+  if (ctrl && ctrl.team === 0 && ctrl !== n && !ctrl.isGK) {
     if (ctrlAge < 0.35) return ctrl;           // 刚换过人，先冷静一下
     var dOld = dist2(ctrl.x, ctrl.y, ball.x, ball.y);
     var dNew = dist2(n.x, n.y, ball.x, ball.y);
@@ -360,7 +377,7 @@ function waitForCounter(p, dt) {
   var cy = (TY + BY) / 2;
   var side = p.slot === 3 ? -1 : 1;
   var dir = p.team === 0 ? 1 : -1;
-  aiSteer(p, clamp(CX + side * 170, LX + 30, RX - 30), cy + dir * SOUL[p.team].waitY, 105, dt);
+  aiSteer(p, clamp(CX + side * 170, LX + 30, RX - 30), cy + dir * soulOf(p.team).waitY, 105, dt);
   var fx = ball.x - p.x, fy = ball.y - p.y, fm = vlen(fx, fy) || 1;
   p.face.x = fx / fm; p.face.y = fy / fm;
 }
@@ -387,8 +404,8 @@ function aiThink(p, dt) {
     var th = nearestEnemyOf(p);
 
     // 近门果断射
-    if (dG < SOUL[p.team].shotR) {
-      var chance = (1 - dG / SOUL[p.team].shotR) * 0.85;
+    if (dG < soulOf(p.team).shotR) {
+      var chance = (1 - dG / soulOf(p.team).shotR) * 0.85;
       if (th.p && th.d < 75) chance *= 0.35;
       if (Math.random() < chance) {
         var aimX = CX + (Math.random() < 0.5 ? -1 : 1) * (24 + Math.random() * 46);   // 打角度别喂门将
@@ -397,7 +414,7 @@ function aiThink(p, dt) {
       }
     }
     // 被贴身逼抢 → 找空位队友（西班牙更早倒脚，阿根廷多带两步）
-    if (th.p && th.d < SOUL[p.team].pressD) {
+    if (th.p && th.d < soulOf(p.team).pressD) {
       var t = bestTeammate(p);
       if (t) { kickToward(p, t.x + t.vx * 0.2, t.y + t.vy * 0.2, passPowerSpeed(0.35 + Math.random() * 0.5)); return; }
     }
@@ -426,7 +443,7 @@ function aiThink(p, dt) {
       // 预判持球人，正面贴上去；被反击就全速回追
       var tx = ball.owner.x + ball.owner.vx * 0.14;
       var ty = ball.owner.y + ball.owner.vy * 0.14;
-      var spd = inOurHalf(p.team) ? 230 : 190;
+      var spd = (inOurHalf(p.team) ? 230 : 190) * soulOf(p.team).chaseSpd;
       aiSteer(p, clamp(tx, LX + 20, RX - 20), clamp(ty, TY + 20, BY - 20), spd, dt);
     } else {
       holdDefensiveLine(p, mine, ball, dt);
@@ -436,14 +453,14 @@ function aiThink(p, dt) {
   // —— 无主球：球在本方半场，前锋不回头；球在中圈/对方半场，最近的前锋去抢 ——
   if (p.slot >= 3) {
     if (!inOurHalf(p.team) && nearestForwardOfTeam(ball.x, ball.y, p.team) === p) {
-      aiSteer(p, ball.x, ball.y, 190, dt);       // 开球争球/前场反抢
+      aiSteer(p, ball.x, ball.y, 190 * soulOf(p.team).chaseSpd, dt);   // 开球争球/前场反抢
     } else {
       waitForCounter(p, dt);
     }
     return;
   }
   if (nearestDefenderOfTeam(ball.x, ball.y, p.team) === p) {
-    aiSteer(p, ball.x, ball.y, 190, dt);
+    aiSteer(p, ball.x, ball.y, 190 * soulOf(p.team).chaseSpd, dt);
   } else {
     holdDefensiveLine(p, mine, ball, dt);
   }
@@ -456,7 +473,7 @@ function supportRun(p, c, dt) {
   var fwdX = fx / fl, fwdY = fy / fl;            // 进攻方向（指向对方球门）
   var rX = -fwdY, rY = fwdX;                     // 进攻方向的右侧
   var side = (p.slot % 2 === 0) ? -1 : 1;        // 偶数槽左路、奇数槽右路，固定不换边
-  var K = SOUL[p.team].supportK;                 // 西班牙接应圈更小（短传控球）
+  var K = soulOf(p.team).supportK;                 // 西班牙接应圈更小（短传控球）
   var th = nearestEnemyOf(p);
   var tx, ty;
   if (p.slot < 2) {
@@ -489,7 +506,7 @@ function holdDefensiveLine(p, mine, b, dt) {
   var post = (p.slot === 0 ? -95 : 95);
   var tx = clamp(mine.x + (b.x - mine.x) * 0.35 + post, CX - GOAL_HALF - 60, CX + GOAL_HALF + 60);
   var dy = b.y - mine.y;
-  var dd2 = SOUL[p.team].defDepth;
+  var dd2 = soulOf(p.team).defDepth;
   var depth = clamp(vlen(b.x - mine.x, dy) / 900, dd2[0], dd2[1]);
   var ty = clamp(mine.y + dy * depth, TY + 40, BY - 40);
   var spd = (b.owner && inOurHalf(p.team)) ? 215 : 125;   // 对面打反击：立刻全速回防
@@ -507,7 +524,7 @@ function bestTeammate(p) {
     var th = nearestEnemyOf(t);
     var t2g = vlen(g.x - t.x, g.y - t.y);
     var open = th.p ? th.d : 999;
-    var score = (p2g - t2g) * 2 - (open < 48 ? 160 : 0) - 0.25 * t2g + (t.slot >= 3 ? SOUL[p.team].outletFwd * 0.5 : 0);
+    var score = (p2g - t2g) * 2 - (open < 48 ? 160 : 0) - 0.25 * t2g + (t.slot >= 3 ? soulOf(p.team).outletFwd * 0.5 : 0);
     if (open > 34 && score > bestScore) { bestScore = score; best = t; }
   }
   return bestScore > 18 ? best : null;
@@ -683,7 +700,7 @@ function outletTeammate(gk) {
     if (open <= 45) continue;                    // 人被贴着，不考虑
     if (!laneClear(gk, t, gk.team)) continue;      // 传球线路上有对方球员，不考虑
     var t2g = vlen(g.x - t.x, g.y - t.y);
-    var score = open - t2g * 0.2 + (t.slot >= 3 ? SOUL[gk.team].outletFwd : 0);   // 阿根廷优先长传找前锋
+    var score = open - t2g * 0.2 + (t.slot >= 3 ? soulOf(gk.team).outletFwd : 0);   // 阿根廷优先长传找前锋
     if (score > bestScore) { bestScore = score; best = t; }
   }
   return best;                                   // null = 没有安全线路
@@ -812,7 +829,7 @@ function stepBall(dt) {
 }
 function goalFor(team) {                     // team = 进球的队伍编号（0阿根廷/1西班牙）
   if (state !== 'play') return;
-  var idx = team === pickIdx ? 0 : 1;        // scores[0]=你，scores[1]=AI
+  var idx = team === 0 ? 0 : 1;               // scores[0]=你（0 侧），scores[1]=AI
   scores[idx]++;
   goalFlash = 1.4; goalSide = idx; goalTeam = team;
   goalSfx();
@@ -961,7 +978,7 @@ function update(dt) {
   // 空格=射门蓄力 / C=传球蓄力（都是按住 0.5 秒蓄满，松开或蓄满出脚；球被断则作废）
   var spNow = !!KEYS[' '], cNow = !!KEYS['c'];
   var ow = ball.owner;
-  var mine = ow && ow.team === pickIdx && !ow.isGK;
+  var mine = ow && ow.team === 0 && !ow.isGK;
   if (!charging && mine && spNow && !prevSpace) { charging = true; charge = 0; aimOff = 0; }
   if (!pCharging && mine && cNow && !prevC) { pCharging = true; pCharge = 0; }
   if (charging) {
@@ -1044,8 +1061,9 @@ function drawBall() {
   ctx.beginPath(); ctx.moveTo(b.x, b.y - b.r); ctx.lineTo(b.x, b.y + b.r); ctx.stroke();
 }
 // 球衣细节：条纹裁剪在球衣轮廓内；V 领、裤边、肩袖撞色
-function drawKit(p) {
-  var T = TEAMS[p.team];
+function drawKit(p, kitOverride) {
+  var kit = kitOverride !== undefined ? kitOverride : kitIndexOf(p.team);
+  var T = TEAMS[kit];
   ctx.fillStyle = T.shorts;
   rr(-9, 10, 18, 9, 3); ctx.fill();
   ctx.fillStyle = 'rgba(255,255,255,0.3)';
@@ -1059,25 +1077,37 @@ function drawKit(p) {
     rr(-10, -3, 20, 6, 3); ctx.fill();                 // 门将胸前护带
     ctx.fillStyle = 'rgba(0,0,0,0.18)';
     ctx.fillRect(-10, -6, 20, 2.4);                    // 肩线阴影
-  } else if (p.team === 0) {
+  } else if (kit === 0) {
     ctx.fillStyle = T.stripe;                          // 阿根廷：三条天蓝竖条
     ctx.fillRect(-7.4, -6, 3.4, 20);
     ctx.fillRect(-1.7, -6, 3.4, 20);
     ctx.fillRect(4.0, -6, 3.4, 20);
-  } else {
+  } else if (kit === 1) {
     ctx.fillStyle = T.collar;                          // 西班牙：藏蓝肩袖
     ctx.fillRect(-10, -6, 4.8, 9);
     ctx.fillRect(5.2, -6, 4.8, 9);
     ctx.fillStyle = T.stripe;                          // 两道细黄竖纹
     ctx.fillRect(-3.4, -6, 1.8, 20);
     ctx.fillRect(1.6, -6, 1.8, 20);
+  } else if (kit === 2) {
+    ctx.fillStyle = T.stripe;                          // 巴西：绿侧边条
+    ctx.fillRect(-9.4, -6, 2.6, 20);
+    ctx.fillRect(6.8, -6, 2.6, 20);
+  } else if (kit === 3) {
+    ctx.fillStyle = '#FFFFFF';                         // 荷兰：白肩袖
+    ctx.fillRect(-10, -6, 3.6, 9);
+    ctx.fillRect(6.4, -6, 3.6, 9);
+  } else {
+    ctx.fillStyle = T.stripe;                          // 法国：红肩袖
+    ctx.fillRect(-10, -6, 3.6, 9);
+    ctx.fillRect(6.4, -6, 3.6, 9);
   }
   ctx.restore();
   ctx.strokeStyle = T.collar; ctx.lineWidth = 1.5;     // V 领撞色
   ctx.beginPath(); ctx.moveTo(-2.8, -4.6); ctx.lineTo(0, -1.6); ctx.lineTo(2.8, -4.6); ctx.stroke();
 }
 function drawChibi(p) {
-  var T = TEAMS[p.team];
+  var T = kitOf(p.team);
   var sx = 1, sy = 1;
   ctx.fillStyle = 'rgba(0,0,0,0.25)';
   ctx.beginPath(); ctx.ellipse(p.x, p.y + 20, p.isGK ? 17 : 14, 5, 0, 0, 7); ctx.fill();
@@ -1179,7 +1209,7 @@ function drawCharge() {
 function drawHUD() {
   ctx.fillStyle = 'rgba(10,14,20,0.85)';
   ctx.fillRect(0, 0, W, 54);
-  var pt = TEAMS[pickIdx], et = TEAMS[pickIdx ^ 1];
+  var pt = kitOf(0), et = kitOf(1);
   function chip(t, x, sc, hl) {
     ctx.fillStyle = hl ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.05)';
     rr(x, 8, 150, 38, 8); ctx.fill();
@@ -1210,7 +1240,7 @@ function drawFlash() {
   ctx.fillText(goalSide === 0 ? '进球！' : '被进球…', CX, (TY + BY) / 2 - 60);
   ctx.font = 'bold 22px sans-serif';
   ctx.fillStyle = '#ffe14d';
-  ctx.fillText(TEAMS[goalTeam].name + ' ' + scores[goalSide] + ' 球', CX, (TY + BY) / 2);
+  ctx.fillText(kitOf(goalTeam).name + ' ' + scores[goalSide] + ' 球', CX, (TY + BY) / 2);
   ctx.shadowBlur = 0;
 }
 function drawKickoff() {
@@ -1229,35 +1259,40 @@ function drawKickoff() {
 function drawMenu() {
   ctx.fillStyle = '#121821'; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#ffffff'; ctx.textAlign = 'center';
-  ctx.font = 'bold 58px sans-serif'; ctx.fillText('街头萌战 2', CX, 240);
+  ctx.font = 'bold 58px sans-serif'; ctx.fillText('街头萌战 2', CX, 220);
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
-  ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
+  ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 276);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.9.0', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v2.10.0', CX, 310);
 
-  var py = 460;
-  for (var i = 0; i < 2; i++) {
-    var t = TEAMS[i], sel = i === pickIdx;
-    var p = { team: i, x: 0, y: 0, face: { x: 0, y: -1 }, bob: 0, moving: true, blink: 2 };
-    ctx.save(); ctx.translate(CX - (sel ? 120 : 96), py - 30); ctx.scale(1.9, 1.9);
-    drawChibiPreview(p); ctx.restore();
-    ctx.font = sel ? 'bold 26px sans-serif' : '22px sans-serif';
-    ctx.fillStyle = sel ? '#ffe14d' : '#aab6c4';
-    ctx.fillText(t.name + '  ·  ' + (i === 0 ? '防反队' : '控球队'), CX + 6, py - 30 + 40);
-    ctx.font = '14px sans-serif'; ctx.fillStyle = '#7c8b9d';
-    ctx.fillText(i === 0 ? '队魂：防守反击 · 长传找前锋' : '队魂：控球倒脚 · 短传渗透', CX + 6, py + 60);
-    py += 190;
+  var t = TEAMS[pickIdx], s = SOUL[pickIdx];
+  var p = { team: 0, isGK: false, x: 0, y: 0, face: { x: 0, y: -1 }, bob: 0, moving: true, blink: 2 };
+  ctx.save(); ctx.translate(CX - 140, 590); ctx.scale(2.4, 2.4);
+  drawChibiPreview(p, pickIdx); ctx.restore();
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 32px sans-serif'; ctx.fillStyle = '#ffe14d';
+  ctx.fillText(t.name, CX + 20, 565);
+  ctx.font = '18px sans-serif'; ctx.fillStyle = '#aab6c4';
+  ctx.fillText('队魂：' + s.label, CX + 20, 600);
+  ctx.fillStyle = '#7c8b9d';
+  ctx.fillText(t.desc, CX + 20, 628);
+  ctx.textAlign = 'center';
+
+  // 五队选择点
+  for (var i = 0; i < TEAMS.length; i++) {
+    ctx.fillStyle = i === pickIdx ? '#ffe14d' : 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.arc(CX - 60 + i * 30, 720, i === pickIdx ? 8 : 5, 0, 7); ctx.fill();
   }
+
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
-  ctx.fillText('按 A / S 选队 · Enter 开球', CX, py + 40);
+  ctx.fillText('A / D 或 ← / → 换队 · Enter 开球（对手随机）', CX, 790);
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
-  ctx.fillText('方向键/WASD 跑动 · C 蓄力传球 · 空格蓄力射门', CX, py + 75);
-  ctx.fillText('门将 AI 自动站位扑救，接稳后会开球分给队友 · 贴身=断球夺权', CX, py + 98);
+  ctx.fillText('方向键/WASD 跑动 · C 蓄力传球 · 空格蓄力射门（蓄力时 ←/→ 瞄准）', CX, 825);
 }
-function drawChibiPreview(p) {
-  var T = TEAMS[p.team];
-  drawKit(p);
-  var skin = ['#f5c69a', '#f0be90'][p.team % 2];
+function drawChibiPreview(p, kit) {
+  var T = TEAMS[kit];
+  drawKit(p, kit);
+  var skin = ['#f5c69a', '#f0be90'][kit % 2];
   ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(0, -14, 13, 0, 7); ctx.fill();
   ctx.fillStyle = '#3a2b22'; ctx.beginPath(); ctx.arc(0, -19.8, 9.4, Math.PI, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#1c2530';
@@ -1277,7 +1312,7 @@ function drawOver() {
   ctx.fillText(scores[0] + ' : ' + scores[1], CX, 375);
 
   // —— 全场数据统计表（左列=你，右列=AI） ——
-  var t0 = pickIdx, t1 = pickIdx ^ 1;
+  var t0 = pickIdx, t1 = oppIdx;
   var pt = stats[t0].poss + stats[t1].poss || 1;
   var poss0 = Math.round(stats[t0].poss / pt * 100);
   var rows = [
@@ -1289,9 +1324,10 @@ function drawOver() {
   ];
   var xL = CX - 200, xR = CX + 200, y = 465;
   ctx.font = 'bold 24px sans-serif';
-  ctx.fillStyle = t0 === 0 ? '#ffffff' : '#e05146';
+  var nameCols = ['#cfe3ff', '#ff6b5e', '#ffe066', '#ffa94d', '#7fb2ff'];
+  ctx.fillStyle = nameCols[t0];
   ctx.fillText(TEAMS[t0].name + '（你）', xL, y);
-  ctx.fillStyle = t1 === 0 ? '#ffffff' : '#e05146';
+  ctx.fillStyle = nameCols[t1];
   ctx.fillText(TEAMS[t1].name, xR, y);
   ctx.fillStyle = '#9fb0c2'; ctx.font = 'bold 20px sans-serif';
   ctx.fillText('全场技术统计', CX, y);
