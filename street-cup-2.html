@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.2.1
+   街头萌战 2 STREET CUP 2 · v2.2.2
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -28,6 +28,7 @@
    v2.2.0：队魂 AI——阿根廷防反（深防线/长传找前锋/前锋压上），
           西班牙控球（小三角短传/高压倒脚/防线前压）
    v2.2.1：修选西班牙时比分记反——进球按队伍编号映射到"你/AI"
+   v2.2.2：修门将死循环——对方不再堵门（回去防守）/ 大脚改开边路
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -338,11 +339,10 @@ function waitForCounter(p, dt) {
 function aiThink(p, dt) {
   if (p.isGK) { aiKeeper(p, dt); return; }      // 门将走专属逻辑（站门/扑救/开球）
 
-  // 对方门将抱着球：自觉退出对方禁区，别堵门（门将看到没人了才会开球）
+  // 对方门将抱着球：不许堵门，直接回防——后卫守门线、前锋回中圈等反击
   if (ball.owner && ball.owner.isGK && ball.owner.team !== p.team) {
-    var eb = boxOf(ball.owner.team);
-    var outY = eb.gy + eb.s * (BOX_DEPTH + 50);  // 退到禁区外一步
-    aiSteer(p, clamp(p.x, LX + 25, RX - 25), outY, 190, dt);
+    if (p.slot >= 3) { waitForCounter(p, dt); return; }
+    holdDefensiveLine(p, myGoalOf(p.team), ball, dt);
     return;
   }
   // —— 我正带球：攻门 / 被逼抢就传 / 否则向前带 ——
@@ -554,9 +554,12 @@ function aiKeeper(p, dt) {
       kickToward(p, t.x + t.vx * 0.2, t.y + t.vy * 0.2, 500);
       return;
     }
-    if (p.gkHold > 2.5) {                        // 等太久也没人空 → 大脚开出去
+    if (p.gkHold > 2.5) {                        // 等太久也没人空 → 大脚开到边路（不闷给对面门将）
       p.gkHold = 0;
-      kickToward(p, g.x, g.y, 740);
+      var sideX = ball.x < CX ? RX - 90 : LX + 90;             // 开到弱侧边线
+      var cyk = (TY + BY) / 2;
+      var fwdY = p.team === 0 ? cyk - 150 : cyk + 150;         // 过中线，但远离对方禁区
+      kickToward(p, sideX, fwdY, 740);
     }
     return;
   }
@@ -614,7 +617,7 @@ function outletTeammate(gk) {
     if (t.team !== gk.team || t === gk || t.isGK) continue;
     var th = nearestEnemyOf(t);
     var open = th.p ? th.d : 999;
-    if (open <= 60) continue;                    // 线路被贴着，不考虑
+    if (open <= 45) continue;                    // 线路被贴着，不考虑
     var t2g = vlen(g.x - t.x, g.y - t.y);
     var score = open - t2g * 0.2 + (t.slot >= 3 ? SOUL[gk.team].outletFwd : 0);   // 阿根廷优先长传找前锋
     if (score > bestScore) { bestScore = score; best = t; }
@@ -1132,7 +1135,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.2.1', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.2.2', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
