@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.5.1
+   街头萌战 2 STREET CUP 2 · v2.5.2
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -35,6 +35,7 @@
    v2.4.1：取消过半场限制——空格全场皆可蓄力射门
    v2.5.0：传球键 Shift→V；传球也上蓄力（轻/正好/太冲接不住），AI 同样
    v2.5.1：传球力度整体上调约 20%（280/420/560+ → 340/500/640+）
+   v2.5.2：传球思路——线路被堵自动换队友（两轮找人）/ 接球半径收紧防吸附
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -507,15 +508,22 @@ function passPowerSpeed(pc) {
 }
 // V = 传球（按住蓄力）：朝"面朝方向"找最合适的队友；找不到就不出脚（绝不误射）
 function passTeammate(p, pc) {
-  var best = null, bestDot = 0.55;
-  for (var i = 0; i < players.length; i++) {
-    var t = players[i];
-    if (t.team !== p.team || t === p || t.isGK) continue;
-    var dx = t.x - p.x, dy = t.y - p.y, d = vlen(dx, dy);
-    if (d < 60 || d > 560) continue;
-    var dot = (dx / d) * p.face.x + (dy / d) * p.face.y;
-    var th = nearestEnemyOf(t);
-    if (dot > bestDot && (!th.p || th.d > 40)) { bestDot = dot; best = t; }
+  // 两轮找人：先找"面朝方向"的；没有线路干净的，就放宽到全场方向
+  var best = null, bestDot = 0;
+  for (var round = 0; round < 2 && !best; round++) {
+    var needDot = round === 0 ? 0.55 : 0.1;
+    for (var i = 0; i < players.length; i++) {
+      var t = players[i];
+      if (t.team !== p.team || t === p || t.isGK) continue;
+      var dx = t.x - p.x, dy = t.y - p.y, d = vlen(dx, dy);
+      if (d < 60 || d > 560) continue;
+      var dot = (dx / d) * p.face.x + (dy / d) * p.face.y;
+      if (dot < needDot) continue;
+      var th = nearestEnemyOf(t);
+      if (th.p && th.d <= 40) continue;          // 人被贴死，不传
+      if (!laneClear(p, t, p.team)) continue;    // 传球线路上有对方球员挡着，换人
+      if (dot > bestDot) { bestDot = dot; best = t; }
+    }
   }
   if (best) {
     // 传球 = 瞄准队友"这一瞬"的位置直线传出，之后双方怎么动都不改轨迹
@@ -790,13 +798,13 @@ function settleBall() {
   var sp = vlen(b.vx, b.vy);
   for (var j = 0; j < players.length; j++) {
     var q = players[j];
-    var reach = q.r + b.r + 2;
+    var reach = q.r + b.r;
     if (dist2(q.x, q.y, b.x, b.y) > reach * reach) continue;
 
     if (sp > 150) {
       // 球滚得快：自己的传球让自家队友接住；对方只能挡掉（弹开），不能吸走
       if (q.team === lastKickTeam && b.free <= 0) {
-        if (sp < 600) { b.owner = q; b.vx = b.vy = 0; return; }   // 第一脚停球
+        if (sp < 520) { b.owner = q; b.vx = b.vy = 0; return; }   // 第一脚停球（快球停不住）
         continue;
       }
       if (q.team !== lastKickTeam || lastKickTeam < 0) {
@@ -1164,7 +1172,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.5.1', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.5.2', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
