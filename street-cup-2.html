@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.12.1
+   街头萌战 2 STREET CUP 2 · v2.12.2
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -54,6 +54,7 @@
    v2.12.0：进球后由被进球方开球；开球必须先传球（开球人钉住，
           只能按 C 传出，AI 开球立刻横传）
    v2.12.1：开球传出前全员冻结；拖延开球 10s 警告 3s，再不开判对方胜
+   v2.12.2：修 AI 不开球——冻结期把 AI 开球人的大脑也冻住了
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -978,6 +979,17 @@ function update(dt) {
   if (frozen) {
     kickWaitT += dt;
     if (kickWaitT > 13) { winner = kickSide === 0 ? 1 : 0; state = 'over'; return; }
+    // AI 开球：冻结中也要立刻把球传出（它的传球逻辑在 aiThink 里，冻结时跑不到）
+    if (ball.owner && ball.owner.team === 1) {
+      var kp2 = ball.owner, tm2 = null, bd4 = 1e9;
+      for (var i4 = 0; i4 < players.length; i4++) {
+        var q4 = players[i4];
+        if (q4.team !== 1 || q4 === kp2 || q4.isGK) continue;
+        var d4 = dist2(kp2.x, kp2.y, q4.x, q4.y);
+        if (d4 < bd4) { bd4 = d4; tm2 = q4; }
+      }
+      if (tm2) kickToward(kp2, tm2.x, tm2.y, 380);
+    }
   }
   var i, p;
   for (i = 0; i < players.length; i++) {
@@ -1346,7 +1358,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v2.12.1', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v2.12.2', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
