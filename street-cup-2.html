@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v2.8.1
+   街头萌战 2 STREET CUP 2 · v2.8.2
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -47,6 +47,7 @@
           绿区指哪打哪，红区按偏移角射偏
    v2.8.1：瞄准转速减半 / 蓄满不再自动发射（停在100%等你松手）/
           红区偏移角收敛——满力脱手战术可控了
+   v2.8.2：红区偏角调回 ±11°（可操控后满力不能几乎必进）
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -714,7 +715,7 @@ function humanShoot(p, ch) {
   if (ch >= 0.7) {
     sp = 880;
     var off = (ch - 0.7) / 0.3;                          // 红区：越满偏越多
-    ang += (Math.random() * 2 - 1) * (0.04 + off * 0.09);
+    ang += (Math.random() * 2 - 1) * (0.05 + off * 0.14);   // 红区偏角 ±11°，满力有代价
   } else if (ch < 0.35) {
     sp = 400;
   } else {
@@ -1231,7 +1232,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 296);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.8.1', CX, 330);
+  ctx.fillText('选自 2026 美加墨世界杯决赛配色 · v2.8.2', CX, 330);
 
   var py = 460;
   for (var i = 0; i < 2; i++) {
