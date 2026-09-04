@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v5.0.0
+   街头萌战 2 STREET CUP 2 · v5.1.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -64,6 +64,7 @@
           进球欢呼声浪、门将手套闷响、扑球风声、撞墙闷响
    ═══ 超级里程碑 v5.0.0 球场版：真实草皮贴图（夜景人工草）
       + 外圈真实球场全景背景（看台+灯光夜景） ═══
+   v5.1.0：新增日本(速度流)/葡萄牙(边路冲击)，共七队
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -91,7 +92,11 @@ var TEAMS = [
   { id:'NED', name:'荷兰', jersey:'#FF6A00', stripe:'#FFFFFF', collar:'#FFFFFF',
     shorts:'#FF6A00', socks:'#FF6A00', gk:'#1a7a4a', desc:'主色 全橙' },
   { id:'FRA', name:'法国', jersey:'#0055A4', stripe:'#C8102E', collar:'#FFFFFF',
-    shorts:'#FFFFFF', socks:'#C8102E', gk:'#e8c832', desc:'主色 深蓝×白裤' }
+    shorts:'#FFFFFF', socks:'#C8102E', gk:'#e8c832', desc:'主色 深蓝×白裤' },
+  { id:'JPN', name:'日本', jersey:'#0E1A8C', stripe:'#FFFFFF', collar:'#FFFFFF',
+    shorts:'#0E1A8C', socks:'#0E1A8C', gk:'#ff5c8a', desc:'主色 深蓝武士×白纹' },
+  { id:'POR', name:'葡萄牙', jersey:'#DA291C', stripe:'#046A38', collar:'#046A38',
+    shorts:'#046A38', socks:'#DA291C', gk:'#f5c400', desc:'主色 红×绿裤' }
 ];
 
 // ---------- 队魂：两队同骨架，风格参数分叉 ----------
@@ -102,7 +107,9 @@ var SOUL = [
   { label:'控球倒脚 · 短传渗透',   pressD: 88, shotR: 350, supportK: 0.72, waitY: 60,  defDepth: [0.35, 0.85], outletFwd: 0,   chaseSpd: 1.0  },  // 西班牙
   { label:'技术流 · 敢带敢突',     pressD: 95, shotR: 400, supportK: 0.8,  waitY: -30, defDepth: [0.28, 0.75], outletFwd: 60,  chaseSpd: 1.0  },  // 巴西
   { label:'高压逼抢 · 全场飞奔',   pressD: 70, shotR: 380, supportK: 0.9,  waitY: 0,   defDepth: [0.4, 0.9],   outletFwd: 40,  chaseSpd: 1.18 },  // 荷兰
-  { label:'均衡 · 能攻善守',       pressD: 70, shotR: 390, supportK: 0.9,  waitY: -20, defDepth: [0.28, 0.7],  outletFwd: 60,  chaseSpd: 1.05 }   // 法国
+  { label:'均衡 · 能攻善守',       pressD: 70, shotR: 390, supportK: 0.9,  waitY: -20, defDepth: [0.28, 0.7],  outletFwd: 60,  chaseSpd: 1.05 },  // 法国
+  { label:'速度流 · 快速反击',     pressD: 65, shotR: 400, supportK: 0.95, waitY: -40, defDepth: [0.3, 0.8],   outletFwd: 80,  chaseSpd: 1.15 },  // 日本
+  { label:'边路冲击 · 大开大合',   pressD: 60, shotR: 410, supportK: 1.15, waitY: -60, defDepth: [0.25, 0.7],  outletFwd: 90,  chaseSpd: 1.05 }   // 葡萄牙
 ];
 // 内部编号：0=你这侧（守下方门）1=AI 侧；球衣/队魂由 pickIdx/oppIdx 映射
 function kitIndexOf(side) { return side === 0 ? pickIdx : oppIdx; }
@@ -1294,10 +1301,20 @@ function drawKit(p, kitOverride) {
     ctx.fillStyle = '#FFFFFF';                         // 荷兰：白肩袖
     ctx.fillRect(-10, -6, 3.6, 9);
     ctx.fillRect(6.4, -6, 3.6, 9);
-  } else {
+  } else if (kit === 4) {
     ctx.fillStyle = T.stripe;                          // 法国：红肩袖
     ctx.fillRect(-10, -6, 3.6, 9);
     ctx.fillRect(6.4, -6, 3.6, 9);
+  } else if (kit === 5) {
+    ctx.fillStyle = T.stripe;                          // 日本：两侧白细纹
+    ctx.fillRect(-8.6, -6, 1.8, 20);
+    ctx.fillRect(6.8, -6, 1.8, 20);
+    ctx.fillRect(-5.2, -6, 1.4, 20);
+    ctx.fillRect(3.8, -6, 1.4, 20);
+  } else {
+    ctx.fillStyle = T.stripe;                          // 葡萄牙：绿色侧带
+    ctx.fillRect(-10, -6, 3.2, 20);
+    ctx.fillRect(6.8, -6, 3.2, 20);
   }
   ctx.restore();
   ctx.strokeStyle = T.collar; ctx.lineWidth = 1.5;     // V 领撞色
@@ -1484,7 +1501,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.0.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.1.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
@@ -1505,7 +1522,7 @@ function drawMenu() {
   ctx.textAlign = 'center';
   for (var i = 0; i < TEAMS.length; i++) {
     ctx.fillStyle = i === pickIdx ? '#ffe14d' : 'rgba(255,255,255,0.25)';
-    ctx.beginPath(); ctx.arc(CX - 60 + i * 30, 670, i === pickIdx ? 7 : 4.5, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(CX - (TEAMS.length - 1) * 15 + i * 30, 670, i === pickIdx ? 7 : 4.5, 0, 7); ctx.fill();
   }
 
   // —— 第 1 行：对手 / P2 的队（可指定/可随机） ——
@@ -1580,7 +1597,7 @@ function drawOver() {
   ];
   var xL = CX - 200, xR = CX + 200, y = 465;
   ctx.font = 'bold 24px sans-serif';
-  var nameCols = ['#cfe3ff', '#ff6b5e', '#ffe066', '#ffa94d', '#7fb2ff'];
+  var nameCols = ['#cfe3ff', '#ff6b5e', '#ffe066', '#ffa94d', '#7fb2ff', '#9faeff', '#ff8a70'];
   ctx.fillStyle = nameCols[t0];
   ctx.fillText(TEAMS[t0].name + (twoPlayer ? '（P1）' : '（你）'), xL, y);
   ctx.fillStyle = nameCols[t1];
