@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v5.2.0
+   街头萌战 2 STREET CUP 2 · v5.3.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -66,6 +66,7 @@
       + 外圈真实球场全景背景（看台+灯光夜景） ═══
    v5.1.0：新增日本(速度流)/葡萄牙(边路冲击)，共七队
    v5.2.0：新增墨西哥(铁桶死守)——八队凑齐，可打淘汰赛
+   v5.3.0：队魂加深——防守时前锋按队魂行动：等反击/摆大巴/一起逼抢
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -105,15 +106,16 @@ var TEAMS = [
 // ---------- 队魂：两队同骨架，风格参数分叉 ----------
 // pressD=被逼多近才传 shotR=AI起脚距离 supportK=接应距离系数
 // waitY=前锋等反击的纵深(+靠后/-压上) defDepth=防线纵深区间 outletFwd=开球找前锋加成
+// fwdDef = 防守时前锋干什么：wait 等反击 / drop 退回防线摆大巴 / press 一起逼抢
 var SOUL = [
-  { label:'防守反击 · 长传找前锋', pressD: 50, shotR: 430, supportK: 1.0,  waitY: -90, defDepth: [0.18, 0.55], outletFwd: 120, chaseSpd: 1.0  },  // 阿根廷
-  { label:'控球倒脚 · 短传渗透',   pressD: 88, shotR: 350, supportK: 0.72, waitY: 60,  defDepth: [0.35, 0.85], outletFwd: 0,   chaseSpd: 1.0  },  // 西班牙
-  { label:'技术流 · 敢带敢突',     pressD: 95, shotR: 400, supportK: 0.8,  waitY: -30, defDepth: [0.28, 0.75], outletFwd: 60,  chaseSpd: 1.0  },  // 巴西
-  { label:'高压逼抢 · 全场飞奔',   pressD: 70, shotR: 380, supportK: 0.9,  waitY: 0,   defDepth: [0.4, 0.9],   outletFwd: 40,  chaseSpd: 1.18 },  // 荷兰
-  { label:'均衡 · 能攻善守',       pressD: 70, shotR: 390, supportK: 0.9,  waitY: -20, defDepth: [0.28, 0.7],  outletFwd: 60,  chaseSpd: 1.05 },  // 法国
-  { label:'速度流 · 快速反击',     pressD: 65, shotR: 400, supportK: 0.95, waitY: -40, defDepth: [0.3, 0.8],   outletFwd: 80,  chaseSpd: 1.15 },  // 日本
-  { label:'边路冲击 · 大开大合',   pressD: 60, shotR: 410, supportK: 1.15, waitY: -60, defDepth: [0.25, 0.7],  outletFwd: 90,  chaseSpd: 1.05 },  // 葡萄牙
-  { label:'铁桶死守 · 摆大巴反击', pressD: 45, shotR: 420, supportK: 0.85, waitY: -80, defDepth: [0.15, 0.5],  outletFwd: 130, chaseSpd: 1.0  }   // 墨西哥
+  { label:'防守反击 · 长传找前锋', pressD: 50, shotR: 430, supportK: 1.0,  waitY: -90, defDepth: [0.18, 0.55], outletFwd: 120, chaseSpd: 1.0,  fwdDef:'wait'  },  // 阿根廷
+  { label:'控球倒脚 · 短传渗透',   pressD: 88, shotR: 350, supportK: 0.72, waitY: 60,  defDepth: [0.35, 0.85], outletFwd: 0,   chaseSpd: 1.0,  fwdDef:'press' },  // 西班牙（控球+反抢）
+  { label:'技术流 · 敢带敢突',     pressD: 95, shotR: 400, supportK: 0.8,  waitY: -30, defDepth: [0.28, 0.75], outletFwd: 60,  chaseSpd: 1.0,  fwdDef:'wait'  },  // 巴西
+  { label:'高压逼抢 · 全场飞奔',   pressD: 70, shotR: 380, supportK: 0.9,  waitY: 0,   defDepth: [0.4, 0.9],   outletFwd: 40,  chaseSpd: 1.18, fwdDef:'press' },  // 荷兰
+  { label:'均衡 · 能攻善守',       pressD: 70, shotR: 390, supportK: 0.9,  waitY: -20, defDepth: [0.28, 0.7],  outletFwd: 60,  chaseSpd: 1.05, fwdDef:'wait'  },  // 法国
+  { label:'速度流 · 快速反击',     pressD: 65, shotR: 400, supportK: 0.95, waitY: -40, defDepth: [0.3, 0.8],   outletFwd: 80,  chaseSpd: 1.15, fwdDef:'wait'  },  // 日本
+  { label:'边路冲击 · 大开大合',   pressD: 60, shotR: 410, supportK: 1.15, waitY: -60, defDepth: [0.25, 0.7],  outletFwd: 90,  chaseSpd: 1.05, fwdDef:'wait'  },  // 葡萄牙
+  { label:'铁桶死守 · 摆大巴反击', pressD: 45, shotR: 420, supportK: 0.85, waitY: 160, defDepth: [0.15, 0.5],  outletFwd: 130, chaseSpd: 1.0,  fwdDef:'drop'  }   // 墨西哥
 ];
 // 内部编号：0=你这侧（守下方门）1=AI 侧；球衣/队魂由 pickIdx/oppIdx 映射
 function kitIndexOf(side) { return side === 0 ? pickIdx : oppIdx; }
@@ -606,9 +608,20 @@ function aiThink(p, dt) {
     supportRun(p, ball.owner, dt);
     return;
   }
-  // —— 对方持球：前锋中圈等反击；后卫一人逼抢、一人守线 ——
+  // —— 对方持球：前锋按队魂行动（等反击/摆大巴/一起抢）；后卫一人逼抢、一人守线 ——
   if (ball.owner) {
-    if (p.slot >= 3) { waitForCounter(p, dt); return; }
+    if (p.slot >= 3) {
+      var fw = soulOf(p.team).fwdDef;
+      if (fw === 'drop') { holdDefensiveLine(p, mine, ball, dt); return; }   // 铁桶：前锋退回防线
+      if (fw === 'press') {                                                  // 高压/控球：前锋一起逼抢
+        var tx2 = ball.owner.x + ball.owner.vx * 0.14;
+        var ty2 = ball.owner.y + ball.owner.vy * 0.14;
+        aiSteer(p, clamp(tx2, LX + 20, RX - 20), clamp(ty2, TY + 20, BY - 20),
+          190 * soulOf(p.team).chaseSpd, dt);
+        return;
+      }
+      waitForCounter(p, dt); return;
+    }
     var chaser = pickChaser(p.team);
     if (chaser === p) {
       // 预判持球人，正面贴上去；被反击就全速回追
@@ -674,7 +687,7 @@ function supportRun(p, c, dt) {
 // 防守站位：两个退防队员一左一右守住"球—本方球门"连线
 function holdDefensiveLine(p, mine, b, dt) {
   // 左后卫守左、右后卫守右，固定不换边，也不跟前锋混抢
-  var post = (p.slot === 0 ? -95 : 95);
+  var post = p.slot === 0 ? -95 : p.slot === 1 ? 95 : (p.slot === 3 ? -40 : 40);   // 后卫守两门柱，前锋退守守内侧
   var tx = clamp(mine.x + (b.x - mine.x) * 0.35 + post, CX - GOAL_HALF - 60, CX + GOAL_HALF + 60);
   var dy = b.y - mine.y;
   var dd2 = soulOf(p.team).defDepth;
@@ -1509,7 +1522,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.2.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.3.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
