@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v5.4.0
+   街头萌战 2 STREET CUP 2 · v5.4.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -69,6 +69,7 @@
    v5.3.0：队魂加深——防守时前锋按队魂行动：等反击/摆大巴/一起逼抢
    v5.3.1：墨西哥降强度——前锋退到禁区前沿盯人，不再直接堵门
    v5.4.0：锦标赛模式——八队抽签淘汰赛，AI 之间自动模拟比分
+   v5.4.1：修锦标赛卡死——update 漏拦截 bracket/champion 状态
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -1107,7 +1108,7 @@ function settleBall() {
 
 // ---------- 主更新 ----------
 function update(dt) {
-  if (state === 'menu' || state === 'over') return;
+  if (state !== 'kickoff' && state !== 'play') return;   // 只有比赛相关状态才跑逻辑（修对阵表卡死）
 
   if (state === 'kickoff') {
     goalFlash = Math.max(0, goalFlash - dt);
@@ -1587,7 +1588,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.4.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.4.1', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
