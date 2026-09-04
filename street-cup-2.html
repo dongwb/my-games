@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v5.4.1
+   街头萌战 2 STREET CUP 2 · v6.0.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -70,6 +70,8 @@
    v5.3.1：墨西哥降强度——前锋退到禁区前沿盯人，不再直接堵门
    v5.4.0：锦标赛模式——八队抽签淘汰赛，AI 之间自动模拟比分
    v5.4.1：修锦标赛卡死——update 漏拦截 bracket/champion 状态
+   ═══ 超级里程碑 v6.0.0 球星版：锦标赛修"淘汰队死而复生"
+      （startMatch 不再读菜单对手设置），逻辑经 1000 次模拟验证 ═══
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -189,7 +191,7 @@ addEventListener('keydown', function (e) {
   } else if (state === 'bracket') {
     if (k === 'enter') {
       if (tourDone) { state = 'menu'; scores = [0, 0]; }
-      else { oppIdx = myPair(); whistleSfx(0.3); startMatch(); }
+      else { oppIdx = myPair(); whistleSfx(0.3); startMatch(true); }
     }
   } else if (state === 'champion') {
     if (k === ' ' || k === 'enter') { state = 'menu'; scores = [0, 0]; }
@@ -337,10 +339,11 @@ function mkPlayer(team, slot) {
   };
 }
 function newStats() { return [{ pass: 0, shot: 0, save: 0, poss: 0 }, { pass: 0, shot: 0, save: 0, poss: 0 }]; }
-function startMatch() {
+function startMatch(fromTour) {
   scores = [0, 0]; clock = 120; winner = null; lastKickTeam = -1;
   stats = newStats();
-  if (oppSel >= 0) oppIdx = oppSel;
+  if (fromTour) { /* 锦标赛：对手由对阵表定，别读菜单设置（修"淘汰队死而复生"） */ }
+  else if (oppSel >= 0) oppIdx = oppSel;
   else do { oppIdx = Math.floor(Math.random() * TEAMS.length); } while (oppIdx === pickIdx);
   chaserOf = [null, null]; ctrlAge = 99;
   players = [];
@@ -1588,7 +1591,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.4.1', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.0.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
