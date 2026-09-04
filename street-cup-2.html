@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v5.1.0
+   街头萌战 2 STREET CUP 2 · v5.2.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -65,6 +65,7 @@
    ═══ 超级里程碑 v5.0.0 球场版：真实草皮贴图（夜景人工草）
       + 外圈真实球场全景背景（看台+灯光夜景） ═══
    v5.1.0：新增日本(速度流)/葡萄牙(边路冲击)，共七队
+   v5.2.0：新增墨西哥(铁桶死守)——八队凑齐，可打淘汰赛
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -96,7 +97,9 @@ var TEAMS = [
   { id:'JPN', name:'日本', jersey:'#0E1A8C', stripe:'#FFFFFF', collar:'#FFFFFF',
     shorts:'#0E1A8C', socks:'#0E1A8C', gk:'#ff5c8a', desc:'主色 深蓝武士×白纹' },
   { id:'POR', name:'葡萄牙', jersey:'#DA291C', stripe:'#046A38', collar:'#046A38',
-    shorts:'#046A38', socks:'#DA291C', gk:'#f5c400', desc:'主色 红×绿裤' }
+    shorts:'#046A38', socks:'#DA291C', gk:'#f5c400', desc:'主色 红×绿裤' },
+  { id:'MEX', name:'墨西哥', jersey:'#006847', stripe:'#CE1126', collar:'#CE1126',
+    shorts:'#FFFFFF', socks:'#CE1126', gk:'#ffdd00', desc:'主色 绿×白裤' }
 ];
 
 // ---------- 队魂：两队同骨架，风格参数分叉 ----------
@@ -109,7 +112,8 @@ var SOUL = [
   { label:'高压逼抢 · 全场飞奔',   pressD: 70, shotR: 380, supportK: 0.9,  waitY: 0,   defDepth: [0.4, 0.9],   outletFwd: 40,  chaseSpd: 1.18 },  // 荷兰
   { label:'均衡 · 能攻善守',       pressD: 70, shotR: 390, supportK: 0.9,  waitY: -20, defDepth: [0.28, 0.7],  outletFwd: 60,  chaseSpd: 1.05 },  // 法国
   { label:'速度流 · 快速反击',     pressD: 65, shotR: 400, supportK: 0.95, waitY: -40, defDepth: [0.3, 0.8],   outletFwd: 80,  chaseSpd: 1.15 },  // 日本
-  { label:'边路冲击 · 大开大合',   pressD: 60, shotR: 410, supportK: 1.15, waitY: -60, defDepth: [0.25, 0.7],  outletFwd: 90,  chaseSpd: 1.05 }   // 葡萄牙
+  { label:'边路冲击 · 大开大合',   pressD: 60, shotR: 410, supportK: 1.15, waitY: -60, defDepth: [0.25, 0.7],  outletFwd: 90,  chaseSpd: 1.05 },  // 葡萄牙
+  { label:'铁桶死守 · 摆大巴反击', pressD: 45, shotR: 420, supportK: 0.85, waitY: -80, defDepth: [0.15, 0.5],  outletFwd: 130, chaseSpd: 1.0  }   // 墨西哥
 ];
 // 内部编号：0=你这侧（守下方门）1=AI 侧；球衣/队魂由 pickIdx/oppIdx 映射
 function kitIndexOf(side) { return side === 0 ? pickIdx : oppIdx; }
@@ -1311,10 +1315,14 @@ function drawKit(p, kitOverride) {
     ctx.fillRect(6.8, -6, 1.8, 20);
     ctx.fillRect(-5.2, -6, 1.4, 20);
     ctx.fillRect(3.8, -6, 1.4, 20);
-  } else {
+  } else if (kit === 6) {
     ctx.fillStyle = T.stripe;                          // 葡萄牙：绿色侧带
     ctx.fillRect(-10, -6, 3.2, 20);
     ctx.fillRect(6.8, -6, 3.2, 20);
+  } else {
+    ctx.fillStyle = T.stripe;                          // 墨西哥：红色侧带
+    ctx.fillRect(-10, -6, 2.6, 20);
+    ctx.fillRect(7.4, -6, 2.6, 20);
   }
   ctx.restore();
   ctx.strokeStyle = T.collar; ctx.lineWidth = 1.5;     // V 领撞色
@@ -1501,7 +1509,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.1.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.2.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
@@ -1597,7 +1605,7 @@ function drawOver() {
   ];
   var xL = CX - 200, xR = CX + 200, y = 465;
   ctx.font = 'bold 24px sans-serif';
-  var nameCols = ['#cfe3ff', '#ff6b5e', '#ffe066', '#ffa94d', '#7fb2ff', '#9faeff', '#ff8a70'];
+  var nameCols = ['#cfe3ff', '#ff6b5e', '#ffe066', '#ffa94d', '#7fb2ff', '#9faeff', '#ff8a70', '#6fdc9f'];
   ctx.fillStyle = nameCols[t0];
   ctx.fillText(TEAMS[t0].name + (twoPlayer ? '（P1）' : '（你）'), xL, y);
   ctx.fillStyle = nameCols[t1];
