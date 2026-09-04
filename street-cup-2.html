@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v5.3.1
+   街头萌战 2 STREET CUP 2 · v5.4.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -68,6 +68,7 @@
    v5.2.0：新增墨西哥(铁桶死守)——八队凑齐，可打淘汰赛
    v5.3.0：队魂加深——防守时前锋按队魂行动：等反击/摆大巴/一起逼抢
    v5.3.1：墨西哥降强度——前锋退到禁区前沿盯人，不再直接堵门
+   v5.4.0：锦标赛模式——八队抽签淘汰赛，AI 之间自动模拟比分
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -142,7 +143,13 @@ var scores = [0, 0];           // [玩家队, AI队]
 var clock = 120, goalFlash = 0, goalSide = -1, goalTeam = -1, readyT = 0;
 var winner = null;
 // ---------- 双人同键盘：每侧一套操控状态（下标 0=P1 下方 / 1=P2 上方） ----------
-var twoPlayer = false;         // 双人模式
+var gameMode = 0;              // 0=单场 1=锦标赛 2=双人同键盘
+var twoPlayer = false;         // 双人模式（= gameMode===2）
+var bracket = null;            // 锦标赛八强抽签
+var bRound = 0;                // 0=八强 1=四强 2=决赛
+var bWinners = [];             // 每轮晋级名单
+var tourResults = [null, null, null];  // 每轮每场比分
+var tourDone = false;          // 你被淘汰了
 var KEYMAP = [
   { up:'w', down:'s', left:'a', right:'d', pass:'c', shoot:' ' },                            // P1（单人时也可用方向键）
   { up:'arrowup', down:'arrowdown', left:'arrowleft', right:'arrowright', pass:'k', shoot:'l' }  // P2
@@ -172,8 +179,18 @@ addEventListener('keydown', function (e) {
     if (k === 'w' || k === 's' || k === 'arrowup' || k === 'arrowdown') menuRow = (menuRow + 1) % 4;
     if (k === 'a' || k === 'arrowleft')  menuMove(-1);
     if (k === 'd' || k === 'arrowright') menuMove(1);
-    if (k === 'enter') { whistleSfx(0.3); startMatch(); }
+    if (k === 'enter') { whistleSfx(0.3); if (gameMode === 1) startTournament(); else startMatch(); }
   } else if (state === 'over') {
+    if (k === ' ' || k === 'enter') {
+      if (gameMode === 1) finishTourMatch();
+      else { state = 'menu'; scores = [0, 0]; }
+    }
+  } else if (state === 'bracket') {
+    if (k === 'enter') {
+      if (tourDone) { state = 'menu'; scores = [0, 0]; }
+      else { oppIdx = myPair(); whistleSfx(0.3); startMatch(); }
+    }
+  } else if (state === 'champion') {
     if (k === ' ' || k === 'enter') { state = 'menu'; scores = [0, 0]; }
   }
 });
@@ -190,7 +207,8 @@ function menuMove(dir) {
       if (oppSel >= TEAMS.length) oppSel = -1;
     } while (oppSel === pickIdx);
   } else if (menuRow === 2) {
-    twoPlayer = !twoPlayer;                       // 第 2 行：模式切换
+    gameMode = (gameMode + 3 + dir) % 3;          // 第 2 行：单场/锦标赛/双人
+    twoPlayer = gameMode === 2;
   } else {
     diffIdx = (diffIdx + 3 + dir) % 3;            // 第 3 行：AI 难度
   }
@@ -1215,6 +1233,44 @@ function update(dt) {
   }
 }
 
+// ---------- 锦标赛 ----------
+function startTournament() {
+  bracket = [0, 1, 2, 3, 4, 5, 6, 7];
+  for (var i = 7; i > 0; i--) {                    // 洗牌抽签
+    var j = Math.floor(Math.random() * (i + 1));
+    var t = bracket[i]; bracket[i] = bracket[j]; bracket[j] = t;
+  }
+  bRound = 0; bWinners = []; tourResults = [null, null, null]; tourDone = false;
+  state = 'bracket';
+}
+function myPair() {                                // 本轮我的对手
+  var pool = bRound === 0 ? bracket : bWinners[bRound - 1];
+  var i = pool.indexOf(pickIdx);
+  return pool[i % 2 === 0 ? i + 1 : i - 1];
+}
+function finishTourMatch() {
+  var pool = bRound === 0 ? bracket : bWinners[bRound - 1];
+  var myWon = winner === 0, res = [];
+  for (var i = 0; i < pool.length; i += 2) {
+    var a = pool[i], b = pool[i + 1];
+    if (a === pickIdx || b === pickIdx) {
+      res.push({ a: a, b: b, sa: a === pickIdx ? scores[0] : scores[1],
+                 sb: a === pickIdx ? scores[1] : scores[0], w: myWon ? pickIdx : (a === pickIdx ? b : a) });
+    } else {
+      // AI vs AI：直接模拟出比分（无平局）
+      var sa = Math.floor(Math.random() * 4), sb = Math.floor(Math.random() * 4);
+      if (sa === sb) sb = (sb + 1) % 4;
+      res.push({ a: a, b: b, sa: sa, sb: sb, w: sa > sb ? a : b });
+    }
+  }
+  tourResults[bRound] = res;
+  bWinners[bRound] = res.map(function (r) { return r.w; });
+  if (!myWon) { tourDone = true; }
+  else if (bRound === 2) { state = 'champion'; return; }
+  else bRound++;
+  state = 'bracket';
+}
+
 function endMatch() {
   winner = scores[0] > scores[1] ? 0 : 1;
   state = 'over';
@@ -1531,7 +1587,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.3.1', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.4.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
@@ -1571,7 +1627,7 @@ function drawMenu() {
   ctx.fillText('模式' + (act2 ? '   ◀   ▶' : ''), CX, 845);
   ctx.font = 'bold 26px sans-serif';
   ctx.fillStyle = act2 ? '#ffffff' : '#c8d3de';
-  ctx.fillText(twoPlayer ? '👥 双人同键盘' : '🤖 单人 vs AI', CX, 885);
+  ctx.fillText(['⚡ 单场比赛', '🏆 锦标赛', '👥 双人同键盘'][gameMode], CX, 885);
 
   // —— 第 3 行：AI 难度（仅单人） ——
   var act3 = menuRow === 3;
@@ -1602,6 +1658,56 @@ function drawChibiPreview(p, kit) {
   ctx.beginPath(); ctx.arc(5, -16, 2, 0, 7); ctx.fill();
   ctx.strokeStyle = '#7a3b2a'; ctx.lineWidth = 1.4;
   ctx.beginPath(); ctx.arc(0, -9, 3, 0.15, Math.PI - 0.15); ctx.stroke();
+}
+// 锦标赛对阵表：三列（八强/四强/决赛），赢家亮、输家灰、我的队黄
+function drawBracket() {
+  ctx.fillStyle = '#121821'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 40px sans-serif';
+  ctx.fillText('🏆 街头杯锦标赛', CX, 140);
+  var names = ['八强赛', '半决赛', '决赛'];
+  var pools = [bracket, bWinners[0] || null, bWinners[1] || null];
+  var colX = [200, 540, 880];
+  for (var r = 0; r < 3; r++) {
+    ctx.fillStyle = '#8fa0b3'; ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(names[r], colX[r], 230);
+    var n = 4 >> r;
+    for (var m = 0; m < n; m++) {
+      var y = (r === 0 ? 320 + m * 150 : r === 1 ? 400 + m * 320 : 550);
+      var pool = pools[r];
+      if (!pool) {
+        ctx.fillStyle = '#4a5563'; ctx.font = 'bold 19px sans-serif';
+        ctx.fillText('？', colX[r], y); ctx.fillText('？', colX[r], y + 30);
+        continue;
+      }
+      var a = pool[m * 2], b = pool[m * 2 + 1];
+      var res = tourResults[r] && tourResults[r][m];
+      var sa = res ? '  ' + res.sa : '', sb = res ? '  ' + res.sb : '';
+      ctx.font = 'bold 19px sans-serif';
+      ctx.fillStyle = a === pickIdx ? '#ffe14d' : (res ? (res.w === a ? '#ffffff' : '#5a6673') : '#aab6c4');
+      ctx.fillText(TEAMS[a].name + sa, colX[r], y);
+      ctx.fillStyle = b === pickIdx ? '#ffe14d' : (res ? (res.w === b ? '#ffffff' : '#5a6673') : '#aab6c4');
+      ctx.fillText(TEAMS[b].name + sb, colX[r], y + 30);
+    }
+  }
+  ctx.font = 'bold 22px sans-serif';
+  if (tourDone) {
+    ctx.fillStyle = '#ff8a70';
+    ctx.fillText('你被' + TEAMS[myPair()].name + '淘汰了… Enter 回主菜单', CX, 1290);
+  } else {
+    ctx.fillStyle = '#ffe14d';
+    ctx.fillText('Enter 开始' + names[bRound] + ' · 你的对手：' + TEAMS[myPair()].name, CX, 1290);
+  }
+}
+function drawChampion() {
+  ctx.fillStyle = '#121821'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.font = '110px sans-serif'; ctx.fillText('🏆', CX, 540);
+  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 46px sans-serif';
+  ctx.fillText(TEAMS[pickIdx].name + ' 是冠军！', CX, 680);
+  ctx.fillStyle = '#aab6c4'; ctx.font = '20px sans-serif';
+  ctx.fillText('连赢三场，捧起街头杯！', CX, 730);
+  ctx.fillText('按 Enter 回主菜单', CX, 820);
 }
 function drawOver() {
   ctx.fillStyle = 'rgba(10,14,20,0.85)'; ctx.fillRect(0, 0, W, H);
@@ -1655,6 +1761,8 @@ function drawOver() {
 function draw() {
   ctx.clearRect(0, 0, W, H);
   if (state === 'menu') { drawMenu(); return; }
+  if (state === 'bracket') { drawBracket(); return; }
+  if (state === 'champion') { drawChampion(); return; }
   drawPitch();
   var list = players.slice().sort(function (a, b) { return a.y - b.y; });
   for (var i = 0; i < list.length; i++) drawChibi(list[i]);
