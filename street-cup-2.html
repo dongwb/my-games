@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v5.3.0
+   街头萌战 2 STREET CUP 2 · v5.3.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -67,6 +67,7 @@
    v5.1.0：新增日本(速度流)/葡萄牙(边路冲击)，共七队
    v5.2.0：新增墨西哥(铁桶死守)——八队凑齐，可打淘汰赛
    v5.3.0：队魂加深——防守时前锋按队魂行动：等反击/摆大巴/一起逼抢
+   v5.3.1：墨西哥降强度——前锋退到禁区前沿盯人，不再直接堵门
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -612,7 +613,7 @@ function aiThink(p, dt) {
   if (ball.owner) {
     if (p.slot >= 3) {
       var fw = soulOf(p.team).fwdDef;
-      if (fw === 'drop') { holdDefensiveLine(p, mine, ball, dt); return; }   // 铁桶：前锋退回防线
+      if (fw === 'drop') { holdMidBlock(p, dt); return; }                   // 铁桶：前锋退到禁区前沿盯人
       if (fw === 'press') {                                                  // 高压/控球：前锋一起逼抢
         var tx2 = ball.owner.x + ball.owner.vx * 0.14;
         var ty2 = ball.owner.y + ball.owner.vy * 0.14;
@@ -684,6 +685,14 @@ function supportRun(p, c, dt) {
     145, dt);
 }
 
+// 铁桶队的前锋：不堵门，退到禁区前沿松盯（站在球和禁区之间）
+function holdMidBlock(p, dt) {
+  var box = boxOf(p.team);
+  var side = p.slot === 3 ? -1 : 1;
+  var tx = clamp(CX + (ball.x - CX) * 0.4 + side * 90, LX + 40, RX - 40);
+  var ty = box.gy + box.s * (BOX_DEPTH + 55);     // 禁区前沿一步
+  aiSteer(p, tx, ty, 150, dt);
+}
 // 防守站位：两个退防队员一左一右守住"球—本方球门"连线
 function holdDefensiveLine(p, mine, b, dt) {
   // 左后卫守左、右后卫守右，固定不换边，也不跟前锋混抢
@@ -1522,7 +1531,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.3.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v5.3.1', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
