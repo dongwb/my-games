@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.1.0
+   街头萌战 2 STREET CUP 2 · v6.2.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -75,6 +75,7 @@
    v6.0.1：AI 模拟比分改为"7 次进攻机会"模型——分布更像真实足球
    v6.1.0：直塞键——X 蓄力直塞打队友身前空当，传小被断/传大滚给对面，
           AI 队友大幅前插时也会直塞
+   v6.2.0：双击方向键=冲刺突破（约两个身位，带球可用）
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -174,6 +175,7 @@ var pChargeS = [0, 0];
 var tChargingS = [false, false]; // 直塞蓄力
 var tChargeS = [0, 0];
 var prevThroughS = [false, false];
+var lastTapS = [{ key:'', t:0 }, { key:'', t:0 }];   // 双击冲刺检测
 var lastKickTeam = -1;         // 球最后是被哪一队踢的（传球/射门归属）
 var stats = null;                // 全场技术统计：传球/射门/扑救/控球时长
 
@@ -184,6 +186,7 @@ addEventListener('keydown', function (e) {
   if ([' ', 'arrowup','arrowdown','arrowleft','arrowright'].indexOf(k) >= 0) e.preventDefault();
   if (e.repeat) return;
   KEYS[k] = true;
+  dashCheck(k);
   if (state === 'menu') {
     if (k === 'w' || k === 's' || k === 'arrowup' || k === 'arrowdown') menuRow = (menuRow + 1) % 4;
     if (k === 'a' || k === 'arrowleft')  menuMove(-1);
@@ -204,6 +207,30 @@ addEventListener('keydown', function (e) {
   }
 });
 addEventListener('keyup', function (e) { KEYS[e.key.toLowerCase()] = false; });
+// 双击某个方向键 = 冲刺突破（约两个身位）
+function dashCheck(k) {
+  if (state !== 'play') return;
+  for (var sd = 0; sd < 2; sd++) {
+    if (sd === 1 && !twoPlayer) continue;
+    var maps = [KEYMAP[sd]];
+    if (sd === 0 && !twoPlayer) maps.push(KEYMAP[1]);   // 单人时 P1 也能用箭头
+    for (var mi = 0; mi < maps.length; mi++) {
+      var km = maps[mi];
+      var dirKey = [km.left, km.right, km.up, km.down].indexOf(k);
+      if (dirKey < 0) continue;
+      var now = performance.now();
+      var lt = lastTapS[sd];
+      if (lt.key === k && now - lt.t < 320 && ctrlS[sd] && !ctrlS[sd].isGK) {
+        var c2 = ctrlS[sd];
+        c2.dashT = 0.22;
+        c2.dashX = [-1, 1, 0, 0][dirKey];
+        c2.dashY = [0, 0, -1, 1][dirKey];
+        diveSfx();                                     // 冲刺风声
+      }
+      lt.key = k; lt.t = now;
+    }
+  }
+}
 // 菜单调值：第 0 行换你的队（撞队则对手回随机）；第 1 行换对手（-1=随机，不许撞队）
 function menuMove(dir) {
   if (menuRow === 0) {
@@ -341,7 +368,7 @@ function mkPlayer(team, slot) {
     r: isGK ? 16 : 15,
     face: { x: 0, y: team === 0 ? -1 : 1 },
     blink: Math.random() * 4, bob: 0, moving: false,
-    gkHold: 0, diveT: 0, diveDir: 0
+    gkHold: 0, diveT: 0, diveDir: 0, dashT: 0, dashX: 0, dashY: 0
   };
 }
 function newStats() { return [{ pass: 0, shot: 0, save: 0, poss: 0 }, { pass: 0, shot: 0, save: 0, poss: 0 }]; }
@@ -494,6 +521,13 @@ function humanMove(p, dt, side) {
   var kR = KEYS[km.right] || (!twoPlayer && side === 0 && KEYS['arrowright']);
   var kU = KEYS[km.up]    || (!twoPlayer && side === 0 && KEYS['arrowup']);
   var kD = KEYS[km.down]  || (!twoPlayer && side === 0 && KEYS['arrowdown']);
+  // 冲刺突破：短暂爆发速度，期间无视方向输入
+  if (p.dashT > 0) {
+    p.dashT -= dt;
+    p.vx = p.dashX * 560; p.vy = p.dashY * 560;
+    p.face.x = p.dashX; p.face.y = p.dashY; p.moving = true;
+    return;
+  }
   // 开球必须先传：脚被钉住，只能按传球键传出去
   if (ball.mustPass && ball.owner === p) { p.vx = 0; p.vy = 0; p.moving = false; return; }
   // 蓄力时钉在原地，射门蓄力可用左右键转瞄准
@@ -1641,7 +1675,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.1.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.2.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
@@ -1698,8 +1732,8 @@ function drawMenu() {
   ctx.fillText('↑/↓ 切换设置 · A/D 或 ←/→ 调整 · Enter 开球', CX, 1035);
   ctx.fillStyle = '#8fa0b3'; ctx.font = '15px sans-serif';
   ctx.fillText(twoPlayer
-    ? 'P1：WASD 跑 · C 传 · X 塞 · 空格 射 ｜ P2：方向键跑 · K 传 · I 塞 · L 射'
-    : '方向键/WASD 跑动 · C 传球 · X 直塞 · 空格射门（都按住蓄力，射门时 ←/→ 瞄准）', CX, 1067);
+    ? 'P1：WASD 跑 · C 传 · X 塞 · 空格 射 ｜ P2：方向键跑 · K 传 · I 塞 · L 射 ｜ 双击方向=冲刺'
+    : '方向键/WASD 跑动（双击=冲刺）· C 传球 · X 直塞 · 空格射门（按住蓄力）', CX, 1067);
 }
 function drawChibiPreview(p, kit) {
   var T = TEAMS[kit];
