@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.0.1
+   街头萌战 2 STREET CUP 2 · v6.1.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -73,6 +73,8 @@
    ═══ 超级里程碑 v6.0.0 球星版：锦标赛修"淘汰队死而复生"
       （startMatch 不再读菜单对手设置），逻辑经 1000 次模拟验证 ═══
    v6.0.1：AI 模拟比分改为"7 次进攻机会"模型——分布更像真实足球
+   v6.1.0：直塞键——X 蓄力直塞打队友身前空当，传小被断/传大滚给对面，
+          AI 队友大幅前插时也会直塞
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -155,8 +157,8 @@ var bWinners = [];             // 每轮晋级名单
 var tourResults = [null, null, null];  // 每轮每场比分
 var tourDone = false;          // 你被淘汰了
 var KEYMAP = [
-  { up:'w', down:'s', left:'a', right:'d', pass:'c', shoot:' ' },                            // P1（单人时也可用方向键）
-  { up:'arrowup', down:'arrowdown', left:'arrowleft', right:'arrowright', pass:'k', shoot:'l' }  // P2
+  { up:'w', down:'s', left:'a', right:'d', pass:'c', shoot:' ', through:'x' },                            // P1（单人时也可用方向键）
+  { up:'arrowup', down:'arrowdown', left:'arrowleft', right:'arrowright', pass:'k', shoot:'l', through:'i' }  // P2
 ];
 var ctrlS = [null, null];      // 每侧操控的人
 var ctrlAgeS = [99, 99];       // 每侧换人冷静期
@@ -169,6 +171,9 @@ var chargeS = [0, 0];
 var aimOffS = [0, 0];            // 瞄准偏移（±0.8 弧度）
 var pChargingS = [false, false]; // 传球蓄力
 var pChargeS = [0, 0];
+var tChargingS = [false, false]; // 直塞蓄力
+var tChargeS = [0, 0];
+var prevThroughS = [false, false];
 var lastKickTeam = -1;         // 球最后是被哪一队踢的（传球/射门归属）
 var stats = null;                // 全场技术统计：传球/射门/扑救/控球时长
 
@@ -363,6 +368,7 @@ function setupPositions(kickTeam) {
   preferCtrlS = [null, null]; preferTS = [0, 0];
   chargingS = [false, false]; chargeS = [0, 0]; aimOffS = [0, 0];
   pChargingS = [false, false]; pChargeS = [0, 0];
+  tChargingS = [false, false]; tChargeS = [0, 0];
   var cy = (TY + BY) / 2;
   for (var i = 0; i < players.length; i++) {
     var p = players[i];
@@ -491,7 +497,7 @@ function humanMove(p, dt, side) {
   // 开球必须先传：脚被钉住，只能按传球键传出去
   if (ball.mustPass && ball.owner === p) { p.vx = 0; p.vy = 0; p.moving = false; return; }
   // 蓄力时钉在原地，射门蓄力可用左右键转瞄准
-  if ((chargingS[side] || pChargingS[side]) && ball.owner === p) {
+  if ((chargingS[side] || pChargingS[side] || tChargingS[side]) && ball.owner === p) {
     p.vx *= 0.8; p.vy *= 0.8; p.moving = false;
     var gg = enemyGoalOf(p.team);
     if (chargingS[side]) {
@@ -613,7 +619,17 @@ function aiThink(p, dt) {
     // 被贴身逼抢 → 找空位队友（西班牙更早倒脚，阿根廷多带两步）
     if (th.p && th.d < soulOf(p.team).pressD) {
       var t = bestTeammate(p);
-      if (t) { kickToward(p, t.x + t.vx * 0.2, t.y + t.vy * 0.2, passPowerSpeed(0.35 + Math.random() * 0.5)); return; }
+      if (t) {
+        var fwdP = p.team === 0 ? (p.y - t.y) : (t.y - p.y);   // 队友比我靠前很多 → 直塞打身后
+        if (fwdP > 180 && Math.random() < 0.5) {
+          var gg2 = enemyGoalOf(p.team);
+          var fx3 = gg2.x - p.x, fy3 = gg2.y - p.y, fl3 = vlen(fx3, fy3) || 1;
+          kickToward(p, t.x + t.vx * 0.35 + fx3 / fl3 * 90, t.y + t.vy * 0.35 + fy3 / fl3 * 220, 560);
+        } else {
+          kickToward(p, t.x + t.vx * 0.2, t.y + t.vy * 0.2, passPowerSpeed(0.35 + Math.random() * 0.5));
+        }
+        return;
+      }
     }
     // 带球向前（顺带躲开挡路的敌人）
     var ex = g.x - p.x, ey = g.y - p.y;
@@ -764,6 +780,29 @@ function kickToward(p, tx, ty, sp, kind) {
 // 蓄力档 → 传球速度：<35% 轻 / 35~70% 正好 / 70~100% 很冲（队友可能停不住）
 function passPowerSpeed(pc) {
   return pc < 0.35 ? 340 : (pc < 0.7 ? 500 : 640 + (pc - 0.7) / 0.3 * 180);
+}
+// X = 直塞（按住蓄力）：找最靠前的队友，往他身前的空当塞——出其不意打身后
+// 蓄力档：轻=传小了被断 / 正好=穿透防线 / 冲=塞过头滚给对面
+function throughBall(p, ch) {
+  var g = enemyGoalOf(p.team);
+  var best = null, bs = -1e9;
+  for (var i = 0; i < players.length; i++) {
+    var t = players[i];
+    if (t.team !== p.team || t === p || t.isGK) continue;
+    var th = nearestEnemyOf(t);
+    var open = th.p ? th.d : 999;
+    var fwdProg = p.team === 0 ? (p.y - t.y) : (t.y - p.y);   // 比我靠前多少
+    var score = fwdProg + open * 0.5;                          // 越靠前、越空越好
+    if (score > bs) { bs = score; best = t; }
+  }
+  if (!best) return;
+  var fx = g.x - p.x, fy = g.y - p.y, fl = vlen(fx, fy) || 1; fx /= fl; fy /= fl;
+  var depth = 130 + ch * 260;                                  // 蓄力决定塞多深
+  var tx = best.x + best.vx * 0.35 + fx * depth * 0.4;
+  var ty = best.y + best.vy * 0.35 + fy * depth;
+  var sp = ch < 0.35 ? 300 : (ch < 0.7 ? 560 : 760);           // 轻/正好/冲
+  kickToward(p, tx, ty, sp);
+  preferCtrlS[p.team] = best; preferTS[p.team] = 1.1;          // 锁接球人迎球跑位
 }
 // V = 传球（按住蓄力）：朝"面朝方向"找最合适的队友；找不到就不出脚（绝不误射）
 function passTeammate(p, pc) {
@@ -1223,7 +1262,9 @@ function update(dt) {
     if (!chargingS[sd2] && mine2 && shNow && !prevShootS[sd2] && !ball.mustPass) {
       chargingS[sd2] = true; chargeS[sd2] = 0; aimOffS[sd2] = 0;      // 开球必须先传
     }
+    var thNow = !!KEYS[km2.through];
     if (!pChargingS[sd2] && mine2 && psNow && !prevPassS[sd2]) { pChargingS[sd2] = true; pChargeS[sd2] = 0; }
+    if (!tChargingS[sd2] && mine2 && thNow && !prevThroughS[sd2]) { tChargingS[sd2] = true; tChargeS[sd2] = 0; }
     if (chargingS[sd2]) {
       chargeS[sd2] = Math.min(1, chargeS[sd2] + dt * 2);
       if (!mine2) { chargingS[sd2] = false; chargeS[sd2] = 0; }
@@ -1234,7 +1275,12 @@ function update(dt) {
       if (!mine2) { pChargingS[sd2] = false; pChargeS[sd2] = 0; }
       else if (!psNow) { passTeammate(ow, pChargeS[sd2]); pChargingS[sd2] = false; pChargeS[sd2] = 0; }
     }
-    prevShootS[sd2] = shNow; prevPassS[sd2] = psNow;
+    if (tChargingS[sd2]) {
+      tChargeS[sd2] = Math.min(1, tChargeS[sd2] + dt * 2);
+      if (!mine2) { tChargingS[sd2] = false; tChargeS[sd2] = 0; }
+      else if (!thNow) { throughBall(ow, tChargeS[sd2]); tChargingS[sd2] = false; tChargeS[sd2] = 0; }
+    }
+    prevShootS[sd2] = shNow; prevPassS[sd2] = psNow; prevThroughS[sd2] = thNow;
   }
 }
 
@@ -1521,7 +1567,7 @@ function drawMustPass() {
   }
 }
 function drawCharge(side) {
-  var val = chargingS[side] ? chargeS[side] : (pChargingS[side] ? pChargeS[side] : -1);   // 射门/传球共用一条
+  var val = chargingS[side] ? chargeS[side] : (pChargingS[side] ? pChargeS[side] : (tChargingS[side] ? tChargeS[side] : -1));   // 射/传/塞共用一条
   if (val < 0 || !ctrlS[side] || state !== 'play') return;
   var w = 52, h = 8;
   var x = ctrlS[side].x - w / 2, y = ctrlS[side].y - 46;
@@ -1595,7 +1641,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.0.1', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.1.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
@@ -1652,8 +1698,8 @@ function drawMenu() {
   ctx.fillText('↑/↓ 切换设置 · A/D 或 ←/→ 调整 · Enter 开球', CX, 1035);
   ctx.fillStyle = '#8fa0b3'; ctx.font = '15px sans-serif';
   ctx.fillText(twoPlayer
-    ? 'P1：WASD 跑 · C 传 · 空格 射（蓄力时 A/D 瞄准）｜ P2：方向键跑 · K 传 · L 射（蓄力时 ←/→ 瞄准）'
-    : '方向键/WASD 跑动 · C 蓄力传球 · 空格蓄力射门（蓄力时 ←/→ 瞄准）', CX, 1067);
+    ? 'P1：WASD 跑 · C 传 · X 塞 · 空格 射 ｜ P2：方向键跑 · K 传 · I 塞 · L 射'
+    : '方向键/WASD 跑动 · C 传球 · X 直塞 · 空格射门（都按住蓄力，射门时 ←/→ 瞄准）', CX, 1067);
 }
 function drawChibiPreview(p, kit) {
   var T = TEAMS[kit];
