@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.4.1
+   街头萌战 2 STREET CUP 2 · v6.4.2
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -82,6 +82,7 @@
    v6.4.0：冲刺改"爆趟"——球先踢出一个身位短暂失控再追回来，
           冲刺中不可再触发（修无限连冲）
    v6.4.1：爆趟球速 170→400——球滚在人身前 1~2 个身位，不再原地不动
+   v6.4.2：爆趟球速 400→600 + 失控窗口 0.5s——趟出去约 1 秒后人才追上球
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -235,8 +236,8 @@ function dashCheck(k) {
         ball.owner = null;
         ball.x = c2.x + dxk * (c2.r + ball.r + 6);
         ball.y = c2.y + dyk * (c2.r + ball.r + 6);
-        ball.vx = dxk * 400; ball.vy = dyk * 400;      // 球滚在人身前 1~2 个身位，冲完正好追上
-        ball.free = 0.2;
+        ball.vx = dxk * 600; ball.vy = dyk * 600;      // 球明显比人快，按物理摩擦慢慢减速
+        ball.free = 0.5;                               // 失控约 1 秒后人才能追回
         lastKickTeam = c2.team;
         c2.dashT = 0.165;   // 冲刺时长（距离≈速度×时长）
         c2.dashX = dxk; c2.dashY = dyk;
@@ -1695,7 +1696,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.4.1', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.4.2', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
