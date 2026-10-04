@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.4.3
+   街头萌战 2 STREET CUP 2 · v6.4.4
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -84,6 +84,7 @@
    v6.4.1：爆趟球速 170→400——球滚在人身前 1~2 个身位，不再原地不动
    v6.4.2：爆趟球速 400→600 + 失控窗口 0.5s——趟出去约 1 秒后人才追上球
    v6.4.3：爆趟球速 600→700——一开始就明显快过人，直接弹出不再"弹簧"
+   v6.4.4：爆趟球强刹车（摩擦×1.6）——弹得快但滚不远，总位移可控
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -237,8 +238,9 @@ function dashCheck(k) {
         ball.owner = null;
         ball.x = c2.x + dxk * (c2.r + ball.r + 6);
         ball.y = c2.y + dyk * (c2.r + ball.r + 6);
-        ball.vx = dxk * 700; ball.vy = dyk * 700;      // 球从一开始就明显快过人（>冲刺560），直接弹出去再慢慢减速
-        ball.free = 0.6;                               // 失控约 1 秒后人才能追回
+        ball.vx = dxk * 650; ball.vy = dyk * 650;      // 球立刻弹出去（快过人）
+        ball.burst = 0.9;                              // 爆趟球专用强摩擦：滚不远
+        ball.free = 0.55;                              // 失控约 1 秒后人才能追回
         lastKickTeam = c2.team;
         c2.dashT = 0.165;   // 冲刺时长（距离≈速度×时长）
         c2.dashX = dxk; c2.dashY = dyk;
@@ -397,7 +399,7 @@ function startMatch(fromTour) {
   else do { oppIdx = Math.floor(Math.random() * TEAMS.length); } while (oppIdx === pickIdx);
   chaserOf = [null, null]; ctrlAge = 99;
   players = [];
-  ball = { x: CX, y: (TY + BY) / 2, vx: 0, vy: 0, r: 9, owner: null, free: 0 };
+  ball = { x: CX, y: (TY + BY) / 2, vx: 0, vy: 0, r: 9, owner: null, free: 0, burst: 0 };
   for (var s = 0; s < 5; s++) {
     players.push(mkPlayer(0, s));               // 玩家队，守下方门
     players.push(mkPlayer(1, s));               // AI 队，守上方门
@@ -823,7 +825,7 @@ function kickToward(p, tx, ty, sp, kind) {
   var dx = tx - p.x, dy = ty - p.y, m = vlen(dx, dy) || 1;
   var fx = dx / m, fy = dy / m;
   ball.vx = fx * sp; ball.vy = fy * sp;
-  ball.owner = null; ball.free = 0.14;
+  ball.owner = null; ball.free = 0.14; ball.burst = 0;
   ball.mustPass = false;                          // 球一离脚，开球限制解除
   ball.shotCharge = kind === 'shot' ? 0.5 : -1;   // 射门力度（脱手判定用）
   lastKickTeam = p.team;
@@ -1071,7 +1073,8 @@ function stepBall(dt) {
     return;
   }
   // 自由球：只受摩擦和边界影响，方向不再被人改
-  var damp = Math.exp(-dt * 1.4);
+  var damp = Math.exp(-dt * (b.burst > 0 ? 2.2 : 1.4));   // 爆趟球强刹车
+  b.burst = Math.max(0, (b.burst || 0) - dt);
   b.vx *= damp; b.vy *= damp;
   if (Math.abs(b.vx) < 5) b.vx = 0;
   if (Math.abs(b.vy) < 5) b.vy = 0;
@@ -1697,7 +1700,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.4.3', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.4.4', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
