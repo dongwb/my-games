@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.4.4
+   街头萌战 2 STREET CUP 2 · v6.5.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -85,6 +85,7 @@
    v6.4.2：爆趟球速 400→600 + 失控窗口 0.5s——趟出去约 1 秒后人才追上球
    v6.4.3：爆趟球速 600→700——一开始就明显快过人，直接弹出不再"弹簧"
    v6.4.4：爆趟球强刹车（摩擦×1.6）——弹得快但滚不远，总位移可控
+   v6.5.0：球撞人改真物理反弹——法线反射+带走球员速度，擦边/正对效果分明
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -1190,12 +1191,15 @@ function settleBall() {
         continue;
       }
       if (q.team !== lastKickTeam || lastKickTeam < 0) {
-        // 挡：弹向别处
-        var dx2 = q.x - b.x, dy2 = q.y - b.y, dm2 = vlen(dx2, dy2) || 1;
-        b.x = q.x + dx2 / dm2 * reach;
-        b.y = q.y + dy2 / dm2 * reach;
-        b.vx = dx2 / dm2 * Math.max(120, sp * 0.45);
-        b.vy = dy2 / dm2 * Math.max(120, sp * 0.45);
+        // 挡：真物理反弹——按接触法线反射入射速度（擦边擦过、正对弹回），
+        // 并带走球员自身的一点速度（迎球挡弹得远，躲着蹭只擦一下）
+        var nx = b.x - q.x, ny = b.y - q.y, nm = vlen(nx, ny) || 1;
+        nx /= nm; ny /= nm;
+        b.x = q.x + nx * reach;
+        b.y = q.y + ny * reach;
+        var dot = b.vx * nx + b.vy * ny;                 // 入射速度在法线上的分量
+        b.vx = (b.vx - 2 * dot * nx) * 0.55 + q.vx * 0.5;
+        b.vy = (b.vy - 2 * dot * ny) * 0.55 + q.vy * 0.5;
         b.free = 0.1;
         lastKickTeam = -1;
         kickSfx();
@@ -1700,7 +1704,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.4.4', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.5.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
