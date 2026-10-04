@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.3.0
+   街头萌战 2 STREET CUP 2 · v6.3.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -78,6 +78,7 @@
    v6.2.0：双击方向键=冲刺突破（约两个身位，带球可用）
    v6.2.1：冲刺距离缩到 3/4（0.22s → 0.165s）
    v6.3.0：带球减速至 4/5（人和 AI 一致）+ 冲刺仅限带球时
+   v6.3.1：带球减速放宽至 9/10 / 高压队只派一个前锋逼抢（不再挤一坨）
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -556,7 +557,7 @@ function humanMove(p, dt, side) {
   if (kD) dy += 1;
   if (dx || dy) {
     var m = vlen(dx, dy); dx /= m; dy /= m;
-    var runSpd = ball.owner === p ? 172 : 215;   // 带球慢一点（×4/5）
+    var runSpd = ball.owner === p ? 194 : 215;   // 带球略慢（×9/10）
     p.vx = dx * runSpd; p.vy = dy * runSpd;
     p.face.x = dx; p.face.y = dy;
     p.moving = true;
@@ -674,7 +675,7 @@ function aiThink(p, dt) {
     aiSteer(p,
       clamp(p.x + ex / dG * 90 + ev, LX + 25, RX - 25),
       clamp(p.y + ey / dG * 90, TY + 25, BY - 25),
-      128, dt);                                  // AI 带球也慢一点（×4/5）
+      144, dt);                                  // AI 带球也略慢（×9/10）
     return;
   }
 
@@ -690,11 +691,15 @@ function aiThink(p, dt) {
     if (p.slot >= 3) {
       var fw = soulOf(p.team).fwdDef;
       if (fw === 'drop') { holdMidBlock(p, dt); return; }                   // 铁桶：前锋退到禁区前沿盯人
-      if (fw === 'press') {                                                  // 高压/控球：前锋一起逼抢
-        var tx2 = ball.owner.x + ball.owner.vx * 0.14;
-        var ty2 = ball.owner.y + ball.owner.vy * 0.14;
-        aiSteer(p, clamp(tx2, LX + 20, RX - 20), clamp(ty2, TY + 20, BY - 20),
-          190 * soulOf(p.team).chaseSpd, dt);
+      if (fw === 'press') {                                                  // 高压/控球：前锋参与逼抢
+        if (nearestForwardOfTeam(ball.x, ball.y, p.team) === p) {            // 但只派离球最近的一个
+          var tx2 = ball.owner.x + ball.owner.vx * 0.14;
+          var ty2 = ball.owner.y + ball.owner.vy * 0.14;
+          aiSteer(p, clamp(tx2, LX + 20, RX - 20), clamp(ty2, TY + 20, BY - 20),
+            190 * soulOf(p.team).chaseSpd, dt);
+        } else {
+          waitForCounter(p, dt);                                             // 另一个保持阵型等反击
+        }
         return;
       }
       waitForCounter(p, dt); return;
@@ -1678,7 +1683,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.3.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.3.1', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
