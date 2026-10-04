@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.2.1
+   街头萌战 2 STREET CUP 2 · v6.3.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -77,6 +77,7 @@
           AI 队友大幅前插时也会直塞
    v6.2.0：双击方向键=冲刺突破（约两个身位，带球可用）
    v6.2.1：冲刺距离缩到 3/4（0.22s → 0.165s）
+   v6.3.0：带球减速至 4/5（人和 AI 一致）+ 冲刺仅限带球时
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -208,7 +209,7 @@ addEventListener('keydown', function (e) {
   }
 });
 addEventListener('keyup', function (e) { KEYS[e.key.toLowerCase()] = false; });
-// 双击某个方向键 = 冲刺突破（约两个身位）
+// 双击某个方向键 = 带球冲刺突破（约 1.5 个身位；无球时不可用）
 function dashCheck(k) {
   if (state !== 'play') return;
   for (var sd = 0; sd < 2; sd++) {
@@ -221,7 +222,7 @@ function dashCheck(k) {
       if (dirKey < 0) continue;
       var now = performance.now();
       var lt = lastTapS[sd];
-      if (lt.key === k && now - lt.t < 320 && ctrlS[sd] && !ctrlS[sd].isGK) {
+      if (lt.key === k && now - lt.t < 320 && ctrlS[sd] && !ctrlS[sd].isGK && ball.owner === ctrlS[sd]) {   // 带球才能冲刺
         var c2 = ctrlS[sd];
         c2.dashT = 0.165;   // 冲刺时长（距离≈速度×时长）
         c2.dashX = [-1, 1, 0, 0][dirKey];
@@ -555,7 +556,8 @@ function humanMove(p, dt, side) {
   if (kD) dy += 1;
   if (dx || dy) {
     var m = vlen(dx, dy); dx /= m; dy /= m;
-    p.vx = dx * 215; p.vy = dy * 215;
+    var runSpd = ball.owner === p ? 172 : 215;   // 带球慢一点（×4/5）
+    p.vx = dx * runSpd; p.vy = dy * runSpd;
     p.face.x = dx; p.face.y = dy;
     p.moving = true;
   } else {
@@ -672,7 +674,7 @@ function aiThink(p, dt) {
     aiSteer(p,
       clamp(p.x + ex / dG * 90 + ev, LX + 25, RX - 25),
       clamp(p.y + ey / dG * 90, TY + 25, BY - 25),
-      160, dt);
+      128, dt);                                  // AI 带球也慢一点（×4/5）
     return;
   }
 
@@ -1676,7 +1678,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.2.1', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.3.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
