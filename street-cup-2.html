@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.6.1
+   街头萌战 2 STREET CUP 2 · v6.6.2
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -89,6 +89,8 @@
    v6.6.0：禁区扩大（170×165→210×200）/ 门将清场改 3 秒警告倒计时，
           超时才被请出去
    v6.6.1：画上禁区弧（D 弧）
+   v6.6.2：禁区弧按真实比例——圆心=点球点（门线前 11m）、半径 9.15m，
+          并画上点球点
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -1443,15 +1445,22 @@ function drawPitch() {
   drawGoal(CX - GOAL_HALF, CX + GOAL_HALF, TY, -1);
   drawGoal(CX - GOAL_HALF, CX + GOAL_HALF, BY, 1);
 }
-// 禁区弧：以门线中心为圆心的半弧，露出禁区外的那截
+// 禁区弧：按真实比例——以点球点为圆心、半径 9.15m（禁区深 16.5m → 200px 换算）
 function drawArcD(team) {
-  var R = BOX_DEPTH + 70;
-  var a = Math.asin(Math.min(1, BOX_DEPTH / R));
+  var gy = team === 0 ? BY : TY;
+  var s  = team === 0 ? -1 : 1;
+  var spotY = gy + s * 133;                    // 点球点：门线前 11m
+  var R = 111;                                 // 弧半径 9.15m
+  // 只画露出禁区外的那截（禁区前沿在 BOX_DEPTH 处）
+  var a = Math.asin(Math.min(1, (BOX_DEPTH - 133) / R));
   ctx.strokeStyle = '#eaf4ee'; ctx.lineWidth = 4;
   ctx.beginPath();
-  if (team === 0) ctx.arc(CX, BY, R, Math.PI + a, Math.PI * 2 - a);   // 下方门：弧朝上
-  else            ctx.arc(CX, TY, R, a, Math.PI - a);                 // 上方门：弧朝下
+  if (team === 0) ctx.arc(CX, spotY, R, Math.PI + a, Math.PI * 2 - a);
+  else            ctx.arc(CX, spotY, R, a, Math.PI - a);
   ctx.stroke();
+  // 点球点
+  ctx.fillStyle = '#eaf4ee';
+  ctx.beginPath(); ctx.arc(CX, spotY, 3, 0, 7); ctx.fill();
 }
 function drawBox(b) {
   ctx.fillStyle = 'rgba(255,255,255,0.05)';
@@ -1736,7 +1745,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.6.1', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.6.2', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
