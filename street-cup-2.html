@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.5.0
+   街头萌战 2 STREET CUP 2 · v6.6.0
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -86,6 +86,8 @@
    v6.4.3：爆趟球速 600→700——一开始就明显快过人，直接弹出不再"弹簧"
    v6.4.4：爆趟球强刹车（摩擦×1.6）——弹得快但滚不远，总位移可控
    v6.5.0：球撞人改真物理反弹——法线反射+带走球员速度，擦边/正对效果分明
+   v6.6.0：禁区扩大（170×165→210×200）/ 门将清场改 3 秒警告倒计时，
+          超时才被请出去
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -97,8 +99,8 @@ var W = 1080, H = 1440, CX = 540;
 // ---------- 球场 ----------
 var LX = 85, RX = 995, TY = 120, BY = 1268;
 var GOAL_HALF = 120;
-var BOX_HALF = 170;            // 禁区半宽
-var BOX_DEPTH = 165;           // 禁区进深
+var BOX_HALF = 210;            // 禁区半宽
+var BOX_DEPTH = 200;           // 禁区进深
 var GK_SPEED_F = 0.75;         // 门将移动速度 = 球员速度(215) × 0.75
 var GK_REACH = 10;             // 门将手套够得着的余量（别太大，否则像磁吸）
 
@@ -388,7 +390,7 @@ function mkPlayer(team, slot) {
     r: isGK ? 16 : 15,
     face: { x: 0, y: team === 0 ? -1 : 1 },
     blink: Math.random() * 4, bob: 0, moving: false,
-    gkHold: 0, diveT: 0, diveDir: 0, dashT: 0, dashX: 0, dashY: 0
+    gkHold: 0, diveT: 0, diveDir: 0, dashT: 0, dashX: 0, dashY: 0, boxT: 0
   };
 }
 function newStats() { return [{ pass: 0, shot: 0, save: 0, poss: 0 }, { pass: 0, shot: 0, save: 0, poss: 0 }]; }
@@ -1297,16 +1299,20 @@ function update(dt) {
     p.y = clamp(p.y, bbox.loY + 6, bbox.hiY - 6);
   }
 
-  // 门将抱球期间，对方球员一律不得留在禁区（规则性驱离，对玩家操控的也生效）
+  // 门将抱球期间：对方球员有 3 秒自己走出禁区，超时才被请出去（不再瞬间推开）
   if (ball.owner && ball.owner.isGK) {
     var hbox = boxOf(ball.owner.team);
     var outY2 = hbox.gy + hbox.s * (BOX_DEPTH + 46);
     for (i = 0; i < players.length; i++) {
       p = players[i];
-      if (p.team === ball.owner.team || p.isGK) continue;
+      if (p.team === ball.owner.team || p.isGK) { p.boxT = 0; continue; }
       if (p.x > hbox.x0 && p.x < hbox.x1 && p.y > hbox.loY && p.y < hbox.hiY) {
-        p.y += (outY2 - p.y) * Math.min(1, dt * 6);   // 温柔地请出去
-      }
+        p.boxT += dt;
+        if (p.boxT > 3) {                             // 超时：请出禁区
+          p.y = outY2; p.vy = hbox.s * 120; p.boxT = 0;
+          whistleSfx(0.15);
+        }
+      } else p.boxT = 0;
     }
   }
 
@@ -1612,6 +1618,19 @@ function drawAim(side) {
   ctx.setLineDash([]);
 }
 // 开球必须传球的头顶提示
+// 禁区警告：门将抱球时，赖在禁区里的对方球员头顶 3 秒倒数
+function drawBoxWarn() {
+  if (state !== 'play' || !(ball.owner && ball.owner.isGK)) return;
+  for (var i = 0; i < players.length; i++) {
+    var p = players[i];
+    if (p.boxT > 0.05) {
+      var left = Math.ceil(3 - p.boxT);
+      ctx.fillStyle = left <= 1 ? '#ff5c5c' : '#ffe14d';
+      ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('⚠️ ' + left, p.x, p.y - 52);
+    }
+  }
+}
 function drawMustPass() {
   if (state !== 'play' || !ball.mustPass || !ball.owner) return;
   if (ball.owner.team === 0 || twoPlayer) {
@@ -1704,7 +1723,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.5.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.6.0', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
@@ -1887,6 +1906,7 @@ function draw() {
   drawAim(0); drawCharge(0);
   if (twoPlayer) { drawAim(1); drawCharge(1); }
   drawMustPass();
+  drawBoxWarn();
   drawHUD();
   if (state === 'play' || state === 'kickoff') drawFlash();
   if (state === 'kickoff') drawKickoff();
