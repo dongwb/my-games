@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   街头萌战 2 STREET CUP 2 · v6.6.0
+   街头萌战 2 STREET CUP 2 · v6.6.1
    5v5（1 门将 + 4 场上球员：2 后卫 + 2 前锋）· 场地×2
    基于初代里程碑 v1.2.0：AI 大脑 / 蓄力射门 / 门将扑救 全部继承
    v2.1.0：角色分工——后卫守家（不过中线/左右固定/反击回追），
@@ -88,6 +88,7 @@
    v6.5.0：球撞人改真物理反弹——法线反射+带走球员速度，擦边/正对效果分明
    v6.6.0：禁区扩大（170×165→210×200）/ 门将清场改 3 秒警告倒计时，
           超时才被请出去
+   v6.6.1：画上禁区弧（D 弧）
    v2.10.0：五支队伍——新增巴西(技术流)/荷兰(高压)/法国(均衡），
           每队专属队魂；A/D 换队，对手随机；内部队伍编号与球衣解耦
    ============================================================ */
@@ -1434,11 +1435,23 @@ function drawPitch() {
   ctx.beginPath(); ctx.moveTo(LX, (TY + BY) / 2); ctx.lineTo(RX, (TY + BY) / 2); ctx.stroke();
   ctx.beginPath(); ctx.arc(CX, (TY + BY) / 2, 95, 0, 7); ctx.stroke();
   ctx.beginPath(); ctx.arc(CX, (TY + BY) / 2, 4, 0, 7); ctx.fillStyle = '#eaf4ee'; ctx.fill();
-  // 两个禁区
+  // 两个禁区 + 禁区弧（D 弧，只画露在禁区外的那段）
   drawBox(boxOf(0));
   drawBox(boxOf(1));
+  drawArcD(0);
+  drawArcD(1);
   drawGoal(CX - GOAL_HALF, CX + GOAL_HALF, TY, -1);
   drawGoal(CX - GOAL_HALF, CX + GOAL_HALF, BY, 1);
+}
+// 禁区弧：以门线中心为圆心的半弧，露出禁区外的那截
+function drawArcD(team) {
+  var R = BOX_DEPTH + 70;
+  var a = Math.asin(Math.min(1, BOX_DEPTH / R));
+  ctx.strokeStyle = '#eaf4ee'; ctx.lineWidth = 4;
+  ctx.beginPath();
+  if (team === 0) ctx.arc(CX, BY, R, Math.PI + a, Math.PI * 2 - a);   // 下方门：弧朝上
+  else            ctx.arc(CX, TY, R, a, Math.PI - a);                 // 上方门：弧朝下
+  ctx.stroke();
 }
 function drawBox(b) {
   ctx.fillStyle = 'rgba(255,255,255,0.05)';
@@ -1723,7 +1736,7 @@ function drawMenu() {
   ctx.fillStyle = '#8fd0a8'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('STREET CUP 2 · 5v5 街头足球 · 大场地', CX, 246);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.6.0', CX, 280);
+  ctx.fillText('选自 2026 美加墨世界杯经典配色 · v6.6.1', CX, 280);
 
   // —— 第 0 行：你的队 ——
   var t = TEAMS[pickIdx], s = SOUL[pickIdx], act0 = menuRow === 0;
