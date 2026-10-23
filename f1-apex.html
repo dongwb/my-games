@@ -19,11 +19,13 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.3.0
+   极速弯心 APEX RACER · v0.4.0
    俯视 F1：真实赛道 + 刹车点 + 走线 + 3 个 AI 对手
    v0.2.0：赛道放大 / 向量物理（横向抓地+甩尾）/ 砂石区陷停 / 加速放缓
    v0.3.0：极速硬上限 330 / 打方向自带刹车（循迹感）/ F1 建模重做
           （前翼/尾翼端板/背鳍/Halo/光头胎）
+   v0.4.0：草地手感重做（顺势滑→缓降→自动领回出草地点）/
+          弯心红白路肩（只画该压的急弯内侧）/ AI 提速
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -95,7 +97,7 @@ function mkCar(i, gx, gy) {
   return {
     team: i, x: gx, y: gy, angle: 0, speed: 0,
     lap: 0, lastSeg: SEGN - 2, lapT: 0, bestLap: 0,
-    aiSkill: 0.86 + i * 0.05, finished: false, finishT: 0, latS: 0
+    aiSkill: 0.97 + i * 0.035, finished: false, finishT: 0, latS: 0, offT: 0, rejoinX: 0, rejoinY: 0
   };
 }
 var state = 'menu';            // menu | race | over
@@ -126,6 +128,21 @@ function kR() { return KEYS['arrowright'] || KEYS['d']; }
 function kU() { return KEYS['arrowup'] || KEYS['w']; }
 function kD() { return KEYS['arrowdown'] || KEYS['s']; }
 
+// 赛道上离 (px,py) 最近的点
+function nearestPt(px, py) {
+  var bx = 0, by = 0, bd = 1e9;
+  for (var i = 0; i < SEGN; i++) {
+    var a = TRACK[i], b = TRACK[(i+1) % SEGN];
+    var vx = b[0]-a[0], vy = b[1]-a[1];
+    var t = ((px-a[0])*vx + (py-a[1])*vy) / (vx*vx+vy*vy);
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    var x = a[0]+vx*t, y = a[1]+vy*t;
+    var d = (px-x)*(px-x) + (py-y)*(py-y);
+    if (d < bd) { bd = d; bx = x; by = y; }
+  }
+  return { x: bx, y: by };
+}
+
 // ---------- 物理 ----------
 function stepCar(c, dt, isPlayer) {
   var ns = nearestSeg(c.x, c.y);
@@ -137,7 +154,7 @@ function stepCar(c, dt, isPlayer) {
     if (kD()) c.speed -= 430 * dt;              // F1 刹车很猛
   }
   c.speed -= c.speed * 0.22 * dt;               // 阻力
-  var cap = onRoad ? 330 : 110;                 // 极速硬上限；冲出赛道：砂石区限速
+  var cap = 330;                                 // 极速硬上限
   if (c.speed > cap) c.speed -= (c.speed - cap) * 2.5 * dt + 30 * dt;
   if (c.speed < 0) c.speed = 0;
 
@@ -155,15 +172,26 @@ function stepCar(c, dt, isPlayer) {
   c.x += (fx * c.speed - fy * c.latS) * dt;
   c.y += (fy * c.speed + fx * c.latS) * dt;
 
-  // 深陷砂石区：快速陷停，只能慢慢爬出来
-  if (ns.d > ROAD_HALF + 30) {
-    c.speed *= (1 - dt * 3);
-    c.latS *= (1 - dt * 2.5);
-    var p0 = TRACK[ns.i], p1 = TRACK[(ns.i+1) % SEGN];
-    var mx = (p0[0]+p1[0])/2, my = (p0[1]+p1[1])/2;
-    c.x += (mx - c.x) * dt * 0.8;
-    c.y += (my - c.y) * dt * 0.8;
-  }
+  // —— 冲出赛道（草地）：先顺势滑、速度缓慢降下来；慢下来后自动领你回出草地的那点 ——
+  if (!onRoad) {
+    if (c.offT === 0) {                          // 刚出去：记下出草地的位置
+      var rp = nearestPt(c.x, c.y);
+      c.rejoinX = rp.x; c.rejoinY = rp.y;
+    }
+    c.offT += dt;
+    c.speed *= (1 - dt * 1.6);                   // 草地速度缓慢衰减（不是一脚闷停）
+    c.latS *= (1 - dt * 2);
+    if (c.speed > 150) c.speed -= (c.speed - 150) * 1.5 * dt;
+    if (c.speed < 95) {                          // 慢下来了：自动带你回出草地前的位置
+      var ax = c.rejoinX - c.x, ay = c.rejoinY - c.y;
+      var wantA = Math.atan2(ay, ax);
+      var dff = wantA - c.angle;
+      while (dff > Math.PI) dff -= Math.PI * 2;
+      while (dff < -Math.PI) dff += Math.PI * 2;
+      c.angle += Math.max(-2.2 * dt, Math.min(2.2 * dt, dff * 3 * dt));
+      c.speed += 60 * dt;                        // 给点回场动力
+    }
+  } else c.offT = 0;
 
   // 圈数：赛段编号从尾绕回头 + 必须真的在跑 + 一圈至少 8 秒（防静止刷圈）
   if (c.lastSeg >= SEGN - 2 && (ns.i <= 1) && c.x > START_X - 85 && c.speed > 40 && c.lapT > 8) {
@@ -198,8 +226,8 @@ function aiDrive(c, dt) {
   var v1x = b[0]-a[0], v1y = b[1]-a[1], v2x = d[0]-b[0], v2y = d[1]-b[1];
   var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
   var turn = 1 - (v1x*v2x + v1y*v2y) / (m1 * m2);        // 0=直道，越大越急
-  var want2 = (350 - turn * 240) * c.aiSkill;
-  if (c.speed < want2) c.speed += 170 * dt;
+  var want2 = (375 - turn * 235) * c.aiSkill;
+  if (c.speed < want2) c.speed += 205 * dt;
   else c.speed -= 380 * dt;
 }
 
@@ -268,10 +296,25 @@ function drawTrack() {
   ctx.moveTo(TRACK[0][0], TRACK[0][1]);
   for (i = 1; i < SEGN; i++) ctx.lineTo(TRACK[i][0], TRACK[i][1]);
   ctx.closePath(); ctx.stroke();
-  // 发卡弯红白路肩
-  ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 10; ctx.setLineDash([10, 10]);
-  ctx.beginPath(); ctx.moveTo(1278, 475); ctx.lineTo(1164, 425); ctx.lineTo(1207, 325); ctx.stroke();
-  ctx.setLineDash([]);
+  // 弯心路肩：只在真正要压的急弯画红白相间小弧（贴在弯内侧边缘）
+  for (var i = 0; i < SEGN; i++) {
+    var ka = TRACK[i], kb = TRACK[(i+1) % SEGN], kd = TRACK[(i+2) % SEGN];
+    var v1x = kb[0]-ka[0], v1y = kb[1]-ka[1], v2x = kd[0]-kb[0], v2y = kd[1]-kb[1];
+    var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
+    if (1 - (v1x*v2x + v1y*v2y) / (m1*m2) < 0.32) continue;   // 不急的弯不画
+    var inX = v2x/m2 - v1x/m1, inY = v2y/m2 - v1y/m1;          // 弯内侧方向
+    var im = Math.sqrt(inX*inX + inY*inY) || 1;
+    inX /= im; inY /= im;
+    var e1x = kb[0] - v1x/m1*30 + inX*(ROAD_HALF+4), e1y = kb[1] - v1y/m1*30 + inY*(ROAD_HALF+4);
+    var e2x = kb[0] + v2x/m2*30 + inX*(ROAD_HALF+4), e2y = kb[1] + v2y/m2*30 + inY*(ROAD_HALF+4);
+    var ccx = kb[0] + inX*(ROAD_HALF+10), ccy = kb[1] + inY*(ROAD_HALF+10);
+    ctx.lineWidth = 7; ctx.lineCap = 'butt';
+    ctx.strokeStyle = '#e8e8e8'; ctx.setLineDash([9, 9]);
+    ctx.beginPath(); ctx.moveTo(e1x, e1y); ctx.quadraticCurveTo(ccx, ccy, e2x, e2y); ctx.stroke();
+    ctx.strokeStyle = '#c0392b'; ctx.setLineDash([9, 9]); ctx.lineDashOffset = 9;
+    ctx.beginPath(); ctx.moveTo(e1x, e1y); ctx.quadraticCurveTo(ccx, ccy, e2x, e2y); ctx.stroke();
+    ctx.setLineDash([]); ctx.lineDashOffset = 0; ctx.lineCap = 'round';
+  }
   // 起点黑白格
   for (var gx = 0; gx < 4; gx++) for (var gy = 0; gy < 8; gy++) {
     ctx.fillStyle = (gx + gy) % 2 ? '#111' : '#fff';
@@ -355,7 +398,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1 赛道竞速', CX, 305);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.3.0', CX, 340);
+  ctx.fillText('v0.4.0', CX, 340);
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
   ctx.fillText('Enter 发车（5 圈 · 3 个 AI 对手）', CX, 470);
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
