@@ -19,9 +19,11 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.2.0
+   极速弯心 APEX RACER · v0.3.0
    俯视 F1：真实赛道 + 刹车点 + 走线 + 3 个 AI 对手
    v0.2.0：赛道放大 / 向量物理（横向抓地+甩尾）/ 砂石区陷停 / 加速放缓
+   v0.3.0：极速硬上限 330 / 打方向自带刹车（循迹感）/ F1 建模重做
+          （前翼/尾翼端板/背鳍/Halo/光头胎）
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -135,7 +137,7 @@ function stepCar(c, dt, isPlayer) {
     if (kD()) c.speed -= 430 * dt;              // F1 刹车很猛
   }
   c.speed -= c.speed * 0.22 * dt;               // 阻力
-  var cap = onRoad ? 360 : 120;                 // 冲出赛道：砂石区限速
+  var cap = onRoad ? 330 : 110;                 // 极速硬上限；冲出赛道：砂石区限速
   if (c.speed > cap) c.speed -= (c.speed - cap) * 2.5 * dt + 30 * dt;
   if (c.speed < 0) c.speed = 0;
 
@@ -145,6 +147,7 @@ function stepCar(c, dt, isPlayer) {
   var steerRate = 2.4 - Math.min(c.speed / 360, 1) * 1.2;
   var dA = steer * steerRate * dt;
   c.angle += dA;
+  if (steer) c.speed -= c.speed * 0.32 * dt;    // 打方向自带一点刹车（循迹刹车感）
   c.latS += steer * c.speed * dA * 0.9;         // 离心把车身往外甩
   c.latS -= c.latS * Math.min(1, (onRoad ? 9 : 3.2) * dt);   // 草地抓地差=滑更远
 
@@ -195,7 +198,7 @@ function aiDrive(c, dt) {
   var v1x = b[0]-a[0], v1y = b[1]-a[1], v2x = d[0]-b[0], v2y = d[1]-b[1];
   var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
   var turn = 1 - (v1x*v2x + v1y*v2y) / (m1 * m2);        // 0=直道，越大越急
-  var want2 = (380 - turn * 260) * c.aiSkill;
+  var want2 = (350 - turn * 240) * c.aiSkill;
   if (c.speed < want2) c.speed += 170 * dt;
   else c.speed -= 380 * dt;
 }
@@ -205,7 +208,7 @@ function carCollide() {
   for (var i = 0; i < cars.length; i++) {
     for (var j = i + 1; j < cars.length; j++) {
       var a = cars[i], b = cars[j];
-      var dx = b.x - a.x, dy = b.y - a.y, d2 = dx*dx + dy*dy, minD = 26;
+      var dx = b.x - a.x, dy = b.y - a.y, d2 = dx*dx + dy*dy, minD = 30;   // 车更大了
       if (d2 < minD*minD && d2 > 0.01) {
         var d = Math.sqrt(d2), push = (minD - d) / d * 0.5;
         a.x -= dx*push; a.y -= dy*push;
@@ -278,22 +281,37 @@ function drawTrack() {
 function drawCar(c) {
   var T = TEAMS[c.team];
   ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.angle);
+  // 阴影
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.fillRect(-13, -8, 26, 16);
-  // 轮胎
+  ctx.beginPath(); ctx.ellipse(0, 0, 18, 10, 0, 0, 7); ctx.fill();
+  // 四个光头胎（大）
   ctx.fillStyle = '#14181e';
-  ctx.fillRect(-11, -10, 7, 5); ctx.fillRect(-11, 5, 7, 5);
-  ctx.fillRect(5, -10, 7, 5);  ctx.fillRect(5, 5, 7, 5);
-  // 车身 + 鼻锥 + 尾翼
-  ctx.fillStyle = T.body;
-  ctx.fillRect(-12, -5, 24, 10);
-  ctx.beginPath(); ctx.moveTo(12, -4); ctx.lineTo(19, 0); ctx.lineTo(12, 4); ctx.closePath(); ctx.fill();
+  ctx.fillRect(-14, -11, 8, 6); ctx.fillRect(-14, 5, 8, 6);   // 后胎宽
+  ctx.fillRect(7, -10, 7, 5);  ctx.fillRect(7, 5, 7, 5);      // 前胎窄
+  // 尾翼 + 端板
   ctx.fillStyle = T.wing;
-  ctx.fillRect(-14, -8, 4, 16);
-  ctx.fillRect(16, -6, 3, 12);
-  // 驾驶舱
+  ctx.fillRect(-17, -9, 4, 18);
+  ctx.fillStyle = T.body;
+  ctx.fillRect(-17, -11, 4, 3); ctx.fillRect(-17, 8, 4, 3);
+  // 侧箱（宽）+ 引擎盖背鳍（窄）
+  ctx.fillStyle = T.body;
+  ctx.fillRect(-13, -6, 22, 12);
+  ctx.fillStyle = T.wing;
+  ctx.fillRect(-13, -2.5, 15, 5);
+  // 鼻锥（收窄到最前）
+  ctx.fillStyle = T.body;
+  ctx.beginPath(); ctx.moveTo(9, -4); ctx.lineTo(21, -1.5); ctx.lineTo(21, 1.5); ctx.lineTo(9, 4); ctx.closePath(); ctx.fill();
+  // 前翼
+  ctx.fillStyle = T.wing;
+  ctx.fillRect(20, -9, 3.5, 18);
+  // 驾驶舱 + Halo 环
   ctx.fillStyle = '#0d1117';
-  ctx.beginPath(); ctx.ellipse(-1, 0, 4.5, 3.4, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-3, 0, 5, 4, 0, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#c8ccd2'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.ellipse(-3, 0, 6.2, 5.2, 0, 0, 7); ctx.stroke();
+  // 车队条纹
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillRect(-13, -1, 22, 2);
   ctx.restore();
   // 你的车头顶小三角
   if (c.team === 0) {
@@ -310,7 +328,7 @@ function drawHUD() {
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 18px sans-serif';
   ctx.fillText('第 ' + Math.min(me.lap, TOTAL_LAPS) + ' / ' + TOTAL_LAPS + ' 圈', 18, 26);
   ctx.fillStyle = '#c8d3de'; ctx.font = 'bold 16px sans-serif';
-  ctx.fillText('车速 ' + Math.round(me.speed * 1.6) + ' km/h', 170, 26);
+  ctx.fillText('车速 ' + Math.round(me.speed) + ' km/h', 170, 26);   // 上限≈330
   ctx.fillText('名次 P' + positionOf(me), 330, 26);
   ctx.textAlign = 'right';
   ctx.fillText('本圈 ' + fmtT(me.lapT), W - 190, 26);
@@ -337,7 +355,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1 赛道竞速', CX, 305);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.2.0', CX, 340);
+  ctx.fillText('v0.3.0', CX, 340);
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
   ctx.fillText('Enter 发车（5 圈 · 3 个 AI 对手）', CX, 470);
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
