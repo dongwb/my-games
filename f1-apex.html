@@ -19,10 +19,12 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.6.0
+   极速弯心 APEX RACER · v0.7.0
    俯视 F1：蒙扎式超大赛道（镜头跟随）+ 向量物理 + 香肠路肩
    v0.6.0：赛道照抄蒙扎布局（大到一屏装不下）/ 开局选难度 /
           碰撞加甩头震动 / 路肩贴地重绘
+   v0.7.0：镜头双视角（近追/全景按 V 切换）/ 终点真压线判定 /
+          车模和路面整体变大
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -41,7 +43,7 @@ var TRACK = [
   [430,650],[380,820],[390,980],[330,1090]             // Parabolica 长右手弯回主直道
 ];
 var SEGN = TRACK.length;
-var ROAD_HALF = 60;
+var ROAD_HALF = 78;
 var START_X = 700;             // 起点线在主直道
 var TOTAL_LAPS = 5;
 
@@ -54,8 +56,13 @@ for (var bi = 0; bi < SEGN; bi++) {
 var MARGIN = 300;
 BD.x0 -= MARGIN; BD.y0 -= MARGIN; BD.x1 += MARGIN; BD.y1 += MARGIN;
 
-// ---------- 镜头 ----------
+// ---------- 镜头（0=近追 1=全景，按 V 切换） ----------
 var cam = { x: 0, y: 0 };
+var camMode = 0;
+function overView() {                              // 全景视角的缩放+居中参数
+  var s = Math.min(W / (BD.x1 - BD.x0), H / (BD.y1 - BD.y0)) * 0.98;
+  return { s: s, ox: (BD.x0 + BD.x1) / 2 - W / 2 / s, oy: (BD.y0 + BD.y1) / 2 - H / 2 / s };
+}
 function camFollow(c, dt) {
   var tx = c.x - W / 2, ty = c.y - H / 2;
   cam.x += (tx - cam.x) * Math.min(1, dt * 5);
@@ -155,7 +162,7 @@ function mkCar(i, gx, gy) {
     team: i, x: gx, y: gy, angle: 0, speed: 0, latS: 0,
     lap: 0, lastSeg: SEGN - 2, lapT: 0, bestLap: 0,
     aiSkill: 0.97 + i * 0.035, finished: false, finishT: 0,
-    offT: 0, rejoinX: 0, rejoinY: 0
+    offT: 0, rejoinX: 0, rejoinY: 0, prevX: gx
   };
 }
 var state = 'menu';
@@ -163,7 +170,7 @@ var raceT = 0, startLights = 0;
 
 function startRace() {
   cars = [];
-  var grid = [[640,1135],[590,1165],[540,1135],[490,1165]];
+  var grid = [[640,1125],[585,1175],[530,1125],[475,1175]];
   for (var i = 0; i < 4; i++) cars.push(mkCar(i, grid[i][0], grid[i][1]));
   raceT = 0; startLights = 2.2; sparks = [];
   state = 'race';
@@ -181,6 +188,7 @@ addEventListener('keydown', function (e) {
     if (k === 'a' || k === 'arrowleft')  diffIdx = (diffIdx + 2) % 3;
     if (k === 'd' || k === 'arrowright') diffIdx = (diffIdx + 1) % 3;
     if (k === 'enter') startRace();
+    if (state === 'race' && k === 'v') camMode = 1 - camMode;   // 比赛中 V 切镜头
   } else if (state === 'over') {
     if (k === 'enter') state = 'menu';
   }
@@ -193,6 +201,7 @@ function kD() { return KEYS['arrowdown'] || KEYS['s']; }
 
 // ---------- 物理（向量模型：纵向油门 + 横向抓地甩尾） ----------
 function stepCar(c, dt, isPlayer) {
+  c.prevX = c.x;                           // 本帧起始位置（压线判定用）
   var ns = nearestSeg(c.x, c.y);
   var onRoad = ns.d < ROAD_HALF + 8;
 
@@ -238,8 +247,8 @@ function stepCar(c, dt, isPlayer) {
     }
   } else c.offT = 0;
 
-  // 圈数：赛段编号从尾绕回头 + 必须真的在跑 + 一圈至少 8 秒
-  if (c.lastSeg >= SEGN - 2 && (ns.i <= 1) && c.x > START_X - 85 && c.speed > 40 && c.lapT > 8) {
+  // 圈数：真的压过起点线才算（上一帧在线左、这一帧在线右），不再提前一车位弹提示
+  if (ns.i === 0 && c.prevX < START_X && c.x >= START_X && c.speed > 40 && c.lapT > 8) {
     if (c.lap > 0) {
       if (!c.bestLap || c.lapT < c.bestLap) c.bestLap = c.lapT;
       if (c.team === 0) beep(880, 0.15, 0.06);
@@ -317,7 +326,7 @@ function carCollide(dt) {
   for (var i = 0; i < cars.length; i++) {
     for (var j = i + 1; j < cars.length; j++) {
       var a = cars[i], b = cars[j];
-      var dx = b.x - a.x, dy = b.y - a.y, d2 = dx*dx + dy*dy, minD = 38;
+      var dx = b.x - a.x, dy = b.y - a.y, d2 = dx*dx + dy*dy, minD = 46;
       if (d2 < minD*minD && d2 > 0.01) {
         var d = Math.sqrt(d2), nx = dx / d, ny = dy / d;
         var push = (minD - d) / d * 0.5;
@@ -440,7 +449,7 @@ function drawTrack() {
 }
 function drawCar(c) {
   var T = TEAMS[c.team];
-  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.angle); ctx.scale(1.28, 1.28);
+  ctx.save(); ctx.translate(c.x, c.y); ctx.rotate(c.angle); ctx.scale(1.7, 1.7);
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.beginPath(); ctx.ellipse(0, 0, 18, 10, 0, 0, 7); ctx.fill();
   ctx.fillStyle = '#14181e';
@@ -505,14 +514,14 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 蒙扎式赛道 · 镜头跟随', CX, 285);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.6.0', CX, 318);
+  ctx.fillText('v0.7.0', CX, 318);
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
   ctx.fillText('AI 难度：' + DIFFAI[diffIdx].label + '（A/D 或 ←/→ 切换）', CX, 430);
   ctx.fillStyle = '#aab6c4'; ctx.font = 'bold 20px sans-serif';
   ctx.fillText('Enter 发车（5 圈 · 3 个 AI 对手）', CX, 480);
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
   ctx.fillText('↑/W 油门 · ↓/S 刹车 · ←→/AD 转向', CX, 525);
-  ctx.fillText('出赛道会滑进草地，慢下来后自动复位 · 弯前记得刹车！', CX, 560);
+  ctx.fillText('出赛道会滑进草地，慢下来后自动复位 · 弯前记得刹车 · V 切换镜头（近追/全景）', CX, 560);
 }
 function drawOver() {
   var me = cars[0];
@@ -542,7 +551,13 @@ function draw() {
   ctx.clearRect(0, 0, W, H);
   if (state === 'menu') { drawMenu(); return; }
   ctx.save();
-  ctx.translate(-cam.x, -cam.y);          // 镜头跟随
+  if (camMode === 1) {                    // 全景：拉远看全图
+    var ov = overView();
+    ctx.scale(ov.s, ov.s);
+    ctx.translate(-ov.ox, -ov.oy);
+  } else {
+    ctx.translate(-cam.x, -cam.y);        // 近追：镜头跟随
+  }
   drawTrack();
   for (var i = cars.length - 1; i >= 0; i--) drawCar(cars[i]);
   drawSparks();
