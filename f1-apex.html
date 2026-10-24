@@ -19,13 +19,15 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.4.0
+   极速弯心 APEX RACER · v0.4.1
    俯视 F1：真实赛道 + 刹车点 + 走线 + 3 个 AI 对手
    v0.2.0：赛道放大 / 向量物理（横向抓地+甩尾）/ 砂石区陷停 / 加速放缓
    v0.3.0：极速硬上限 330 / 打方向自带刹车（循迹感）/ F1 建模重做
           （前翼/尾翼端板/背鳍/Halo/光头胎）
    v0.4.0：草地手感重做（顺势滑→缓降→自动领回出草地点）/
           弯心红白路肩（只画该压的急弯内侧）/ AI 提速
+   v0.4.1：草地改"真复位"（慢下来直接回到出草地前的位置，不再转圈）/
+          转向力度加大
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -161,7 +163,7 @@ function stepCar(c, dt, isPlayer) {
   // 转向：越快越钝；打方向会甩出横向速度（横向 G），抓地力慢慢消化
   var steer = 0;
   if (isPlayer) { if (kL()) steer -= 1; if (kR()) steer += 1; }
-  var steerRate = 2.4 - Math.min(c.speed / 360, 1) * 1.2;
+  var steerRate = 3.0 - Math.min(c.speed / 330, 1) * 1.1;   // 转向更有力
   var dA = steer * steerRate * dt;
   c.angle += dA;
   if (steer) c.speed -= c.speed * 0.32 * dt;    // 打方向自带一点刹车（循迹刹车感）
@@ -182,14 +184,13 @@ function stepCar(c, dt, isPlayer) {
     c.speed *= (1 - dt * 1.6);                   // 草地速度缓慢衰减（不是一脚闷停）
     c.latS *= (1 - dt * 2);
     if (c.speed > 150) c.speed -= (c.speed - 150) * 1.5 * dt;
-    if (c.speed < 95) {                          // 慢下来了：自动带你回出草地前的位置
-      var ax = c.rejoinX - c.x, ay = c.rejoinY - c.y;
-      var wantA = Math.atan2(ay, ax);
-      var dff = wantA - c.angle;
-      while (dff > Math.PI) dff -= Math.PI * 2;
-      while (dff < -Math.PI) dff += Math.PI * 2;
-      c.angle += Math.max(-2.2 * dt, Math.min(2.2 * dt, dff * 3 * dt));
-      c.speed += 60 * dt;                        // 给点回场动力
+    if (c.speed < 60) {                          // 慢下来了：直接复位到出草地前的位置
+      c.x = c.rejoinX; c.y = c.rejoinY;
+      var sg = nearestSeg(c.x, c.y);
+      var a2 = TRACK[sg.i], b2 = TRACK[(sg.i+1) % SEGN];
+      c.angle = Math.atan2(b2[1] - a2[1], b2[0] - a2[0]);   // 车头对准赛道方向
+      c.speed = 0; c.latS = 0; c.offT = 0;
+      beep(440, 0.12, 0.05);
     }
   } else c.offT = 0;
 
@@ -218,7 +219,7 @@ function aiDrive(c, dt) {
   var diff = want - c.angle;
   while (diff > Math.PI) diff -= Math.PI * 2;
   while (diff < -Math.PI) diff += Math.PI * 2;
-  var grip = 2.4 - Math.min(c.speed / 360, 1) * 1.2;
+  var grip = 3.0 - Math.min(c.speed / 330, 1) * 1.1;
   c.angle += Math.max(-grip * dt, Math.min(grip * dt, diff * 3 * dt));
 
   // 看下一个弯的急缓定目标速度
@@ -398,7 +399,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1 赛道竞速', CX, 305);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.4.0', CX, 340);
+  ctx.fillText('v0.4.1', CX, 340);
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
   ctx.fillText('Enter 发车（5 圈 · 3 个 AI 对手）', CX, 470);
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
