@@ -19,12 +19,14 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.7.0
+   极速弯心 APEX RACER · v0.8.0
    俯视 F1：蒙扎式超大赛道（镜头跟随）+ 向量物理 + 香肠路肩
    v0.6.0：赛道照抄蒙扎布局（大到一屏装不下）/ 开局选难度 /
           碰撞加甩头震动 / 路肩贴地重绘
    v0.7.0：镜头双视角（近追/全景按 V 切换）/ 终点真压线判定 /
           车模和路面整体变大
+   v0.8.0：鼠标点击时代——大厅点按钮选难度+发车，比赛中点按钮切镜头 /
+          路肩防重叠 / 路面再加宽
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -43,7 +45,7 @@ var TRACK = [
   [430,650],[380,820],[390,980],[330,1090]             // Parabolica 长右手弯回主直道
 ];
 var SEGN = TRACK.length;
-var ROAD_HALF = 78;
+var ROAD_HALF = 84;
 var START_X = 700;             // 起点线在主直道
 var TOTAL_LAPS = 5;
 
@@ -194,6 +196,26 @@ addEventListener('keydown', function (e) {
   }
 });
 addEventListener('keyup', function (e) { KEYS[e.key.toLowerCase()] = false; });
+// 屏幕按钮（鼠标可点）
+var BTNS = [];
+function btnPath(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+cv.addEventListener('click', function (e) {
+  var r = cv.getBoundingClientRect();
+  var x = (e.clientX - r.left) * (cv.width / r.width);
+  var y = (e.clientY - r.top) * (cv.height / r.height);
+  for (var i = 0; i < BTNS.length; i++) {
+    var b = BTNS[i];
+    if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) { b.fn(); break; }
+  }
+});
 function kL() { return KEYS['arrowleft'] || KEYS['a']; }
 function kR() { return KEYS['arrowright'] || KEYS['d']; }
 function kU() { return KEYS['arrowup'] || KEYS['w']; }
@@ -411,11 +433,14 @@ function drawTrack() {
   ctx.closePath(); ctx.stroke();
 
   // 弯心香肠路肩：只在真正要压的急弯画（弯内侧，贴地逐颗排开）
+  var lastKx = -1e9, lastKy = 0;
   for (i = 0; i < SEGN; i++) {
     var ka = TRACK[i], kb = TRACK[(i+1) % SEGN], kd = TRACK[(i+2) % SEGN];
     var v1x = kb[0]-ka[0], v1y = kb[1]-ka[1], v2x = kd[0]-kb[0], v2y = kd[1]-kb[1];
     var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
     if (1 - (v1x*v2x + v1y*v2y) / (m1*m2) < 0.35) continue;
+    if (Math.abs(kb[0]-lastKx) + Math.abs(kb[1]-lastKy) < 100) continue;   // 跟上一个路肩太近就跳过（防重叠）
+    lastKx = kb[0]; lastKy = kb[1];
     var inX = v2x/m2 - v1x/m1, inY = v2y/m2 - v1y/m1;
     var im = Math.sqrt(inX*inX + inY*inY) || 1;
     inX /= im; inY /= im;
@@ -482,6 +507,16 @@ function drawCar(c) {
 }
 function drawHUD() {
   ctx.fillStyle = 'rgba(10,14,20,0.85)'; ctx.fillRect(0, 0, W, 50);
+  if (state === 'race') {                       // 镜头切换按钮（鼠标可点）
+    var bx2 = W - 128, by2 = 62;
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    btnPath(bx2, by2, 112, 34, 8); ctx.fill();
+    ctx.fillStyle = '#c8d3de'; ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('镜头：' + (camMode === 0 ? '近追' : '全景'), bx2 + 56, by2 + 18);
+    ctx.textAlign = 'left';
+    BTNS.push({ x: bx2, y: by2, w: 112, h: 34, fn: function () { camMode = 1 - camMode; } });
+  }
   var me = cars[0];
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 18px sans-serif';
@@ -514,11 +549,27 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 蒙扎式赛道 · 镜头跟随', CX, 285);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.7.0', CX, 318);
-  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 22px sans-serif';
-  ctx.fillText('AI 难度：' + DIFFAI[diffIdx].label + '（A/D 或 ←/→ 切换）', CX, 430);
-  ctx.fillStyle = '#aab6c4'; ctx.font = 'bold 20px sans-serif';
-  ctx.fillText('Enter 发车（5 圈 · 3 个 AI 对手）', CX, 480);
+  ctx.fillText('v0.8.0', CX, 318);
+  // 难度按钮（鼠标点击选择）
+  ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
+  ctx.fillText('AI 难度（点击选择）', CX, 400);
+  var bw = 150, bh = 54;
+  for (var i = 0; i < 3; i++) {
+    var bx = CX - 245 + i * 170, by = 420;
+    ctx.fillStyle = i === diffIdx ? 'rgba(255,225,77,0.18)' : 'rgba(255,255,255,0.07)';
+    btnPath(bx, by, bw, bh, 10); ctx.fill();
+    if (i === diffIdx) { ctx.strokeStyle = '#ffe14d'; ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.fillStyle = i === diffIdx ? '#ffe14d' : '#aab6c4';
+    ctx.font = 'bold 19px sans-serif';
+    ctx.fillText(DIFFAI[i].label, bx + bw / 2, by + bh / 2 + 1);
+    (function (idx) { BTNS.push({ x: bx, y: by, w: bw, h: bh, fn: function () { diffIdx = idx; } }); })(i);
+  }
+  // 大开始按钮
+  ctx.fillStyle = '#D92B2B';
+  btnPath(CX - 150, 505, 300, 62, 14); ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 24px sans-serif';
+  ctx.fillText('🏁 发车（或按 Enter）', CX, 537);
+  BTNS.push({ x: CX - 150, y: 505, w: 300, h: 62, fn: startRace });
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
   ctx.fillText('↑/W 油门 · ↓/S 刹车 · ←→/AD 转向', CX, 525);
   ctx.fillText('出赛道会滑进草地，慢下来后自动复位 · 弯前记得刹车 · V 切换镜头（近追/全景）', CX, 560);
@@ -548,6 +599,7 @@ function drawOver() {
   ctx.fillText('按 Enter 回主菜单', CX, 640);
 }
 function draw() {
+  BTNS = [];
   ctx.clearRect(0, 0, W, H);
   if (state === 'menu') { drawMenu(); return; }
   ctx.save();
