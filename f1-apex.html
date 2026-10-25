@@ -23,9 +23,10 @@
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
-   v0.11.0：赛道整体放大 ×1.55（一圈 30 多秒）/ 路肩系统重写——
-          连续同向弯算一条弯，沿内侧沥青边缘整段铺（治漩涡乱码）/
-          尾流存在感加强：更亮的气带 + 车身脉冲光圈 + 进尾流提示音
+   v0.11.0：赛道整体放大 ×2（一圈 30 多秒）/ 路肩沿内侧沥青边缘整段铺
+   v0.11.1：路肩渲染做减法——白底红杠经典路肩带（不再逐颗香肠乱飞）/
+          尾流删繁就简（只留气带+小字，去掉光圈和提示音）/
+          引擎声浪重做：双振荡器+低通滤波+模拟换挡转速
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -151,7 +152,7 @@ function nearestPt(px, py) {
 }
 
 // ---------- 音效 ----------
-var AC = null, engO = null, engG = null;
+var AC = null, engO = null, engO2 = null, engF = null, engG = null;
 function ac() {
   try {
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
@@ -161,13 +162,26 @@ function ac() {
 }
 function engineStart() {
   var a = ac(); if (!a || engO) return;
-  engO = a.createOscillator(); engG = a.createGain();
-  engO.type = 'sawtooth'; engO.frequency.value = 70;
-  engG.gain.value = 0.028;
-  engO.connect(engG); engG.connect(a.destination); engO.start();
+  // 双振荡器 + 低通滤波：锯齿波打底、方波垫高频，滤掉毛刺——不再是低频"放屁"声
+  engF = a.createBiquadFilter(); engF.type = 'lowpass'; engF.frequency.value = 1100; engF.Q.value = 2;
+  engG = a.createGain(); engG.gain.value = 0.02;
+  engO = a.createOscillator(); engO.type = 'sawtooth'; engO.frequency.value = 110;
+  engO2 = a.createOscillator(); engO2.type = 'square'; engO2.frequency.value = 165;
+  engO.connect(engF); engO2.connect(engF);
+  engF.connect(engG); engG.connect(a.destination);
+  engO.start(); engO2.start();
 }
-function engineStop() { if (engO) { try { engO.stop(); } catch(e){} engO = null; } }
-function engineTick(sp) { if (engO && AC) engO.frequency.setValueAtTime(70 + sp * 0.85, AC.currentTime); }
+function engineStop() {
+  if (engO) { try { engO.stop(); engO2.stop(); } catch(e){} engO = null; engO2 = null; }
+}
+function engineTick(sp) {
+  if (!engO || !AC) return;
+  // 模拟换挡：每 55 速度一档，档内转速爬升、升档转速回落
+  var gear = Math.floor(sp / 55);
+  var f = 100 + gear * 38 + (sp - gear * 55) * 1.7;
+  engO.frequency.setValueAtTime(f, AC.currentTime);
+  if (engO2) engO2.frequency.setValueAtTime(f * 1.5, AC.currentTime);
+}
 function beep(f, dur, vol) {
   var a = ac(); if (!a) return;
   try {
@@ -418,24 +432,16 @@ function drawKerbRun(vs, ve) {
       samples.push({ x: vx2, y: vy2, a: Math.atan2(vy2 - lastS.y, vx2 - lastS.x) });
     }
   }
-  // 深色底边让路肩贴地
-  ctx.strokeStyle = 'rgba(20,24,30,0.55)'; ctx.lineWidth = 13; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  // 白底红杠经典路肩带：先深色描边贴地，再铺白底，最后叠红色虚线——简单干净
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(samples[0].x, samples[0].y);
   for (var r = 1; r < samples.length; r++) ctx.lineTo(samples[r].x, samples[r].y);
-  ctx.stroke();
-  // 逐颗香肠
-  for (r = 0; r < samples.length; r++) {
-    var smp = samples[r];
-    ctx.save(); ctx.translate(smp.x, smp.y); ctx.rotate(smp.a);
-    ctx.fillStyle = (r % 2) ? '#c0392b' : '#f2f2f2';
-    ctx.beginPath();
-    ctx.moveTo(-3.5, -5);
-    ctx.arcTo(6.5, -5, 6.5, 5, 3); ctx.arcTo(6.5, 5, -6.5, 5, 3);
-    ctx.arcTo(-6.5, 5, -6.5, -5, 3); ctx.arcTo(-6.5, -5, 6.5, -5, 3);
-    ctx.closePath(); ctx.fill();
-    ctx.restore();
-  }
+  ctx.strokeStyle = 'rgba(20,24,30,0.5)'; ctx.lineWidth = 15; ctx.stroke();
+  ctx.strokeStyle = '#f2f2f2'; ctx.lineWidth = 12; ctx.stroke();
+  ctx.setLineDash([18, 18]);
+  ctx.strokeStyle = '#c0392b'; ctx.stroke();
+  ctx.setLineDash([]);
 }
 function drawKerbs() {
   var j = 0;
@@ -624,12 +630,7 @@ function update(dt) {
   for (var i = 0; i < cars.length; i++) {
     var c = cars[i];
     if (c.finished) { c.speed *= (1 - dt * 0.8); }
-    if (c.team === 0) {
-      c.slipFrom = slipCheck(c); c.slip = !!c.slipFrom;
-      if (c.slip && !c.slipPrev) beep(520, 0.18, 0.045);   // 进尾流提示音
-      c.slipPrev = c.slip;
-      stepCar(c, dt, true);
-    }
+    if (c.team === 0) { c.slipFrom = slipCheck(c); c.slip = !!c.slipFrom; stepCar(c, dt, true); }
     else { c.slip = false; c.slipFrom = null; aiDrive(c, dt); stepCar(c, dt, false); }
   }
   carCollide(dt);
@@ -726,15 +727,11 @@ function drawHUD() {
   ctx.fillText('第 ' + Math.min(me.lap, TOTAL_LAPS) + ' / ' + TOTAL_LAPS + ' 圈', 18, 26);
   ctx.fillStyle = '#c8d3de'; ctx.font = 'bold 16px sans-serif';
   ctx.fillText('车速 ' + Math.round(me.speed) + ' km/h', 170, 26);
-  if (me.slip) {                                   // 尾流提示（醒目的胶囊徽章）
-    ctx.fillStyle = 'rgba(16,58,80,0.9)';
-    btnPath(322, 7, 150, 36, 18); ctx.fill();
-    ctx.strokeStyle = '#6ee7ff'; ctx.lineWidth = 2; ctx.stroke();
-    ctx.fillStyle = '#6ee7ff'; ctx.textAlign = 'center';
-    ctx.fillText('⚡尾流 ×1.1', 397, 26);
-    ctx.textAlign = 'left';
+  if (me.slip) {                                   // 尾流提示
+    ctx.fillStyle = '#6ee7ff';
+    ctx.fillText('⚡尾流 ×1.1', 330, 26);
   }
-  ctx.fillText('名次 P' + positionOf(me), 500, 26);
+  ctx.fillText('名次 P' + positionOf(me), 480, 26);
   ctx.textAlign = 'right';
   ctx.fillText('本圈 ' + fmtT(me.lapT), W - 190, 26);
   ctx.fillStyle = '#8fd0a8';
@@ -760,7 +757,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.11.0', CX, 242);
+  ctx.fillText('v0.11.1', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
@@ -859,12 +856,6 @@ function draw() {
       ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(wx - 16 - wt * 10, wy); ctx.stroke();
     }
     ctx.restore();
-    // 玩家车身脉冲光圈：一眼知道自己正在吃尾流
-    var pr = 36 + Math.sin(raceT * 10) * 5;
-    ctx.strokeStyle = 'rgba(110,231,255,0.8)'; ctx.lineWidth = 3.5;
-    ctx.beginPath(); ctx.arc(cars[0].x, cars[0].y, pr, 0, 7); ctx.stroke();
-    ctx.strokeStyle = 'rgba(110,231,255,0.3)'; ctx.lineWidth = 8;
-    ctx.beginPath(); ctx.arc(cars[0].x, cars[0].y, pr + 5, 0, 7); ctx.stroke();
   }
   for (var i = cars.length - 1; i >= 0; i--) drawCar(cars[i]);
   drawSparks();
