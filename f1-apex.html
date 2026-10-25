@@ -19,30 +19,28 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.8.0
-   俯视 F1：蒙扎式超大赛道（镜头跟随）+ 向量物理 + 香肠路肩
-   v0.6.0：赛道照抄蒙扎布局（大到一屏装不下）/ 开局选难度 /
-          碰撞加甩头震动 / 路肩贴地重绘
-   v0.7.0：镜头双视角（近追/全景按 V 切换）/ 终点真压线判定 /
-          车模和路面整体变大
+   极速弯心 APEX RACER · v0.9.0
+   俯视 F1：眼镜蛇赛道（大发卡+连续S弯）+ 向量物理 + 尾流超车
    v0.8.0：鼠标点击时代——大厅点按钮选难度+发车，比赛中点按钮切镜头 /
           路肩防重叠 / 路面再加宽
+   v0.9.0：全新眼镜蛇赛道（大发卡弯/连续S弯/之字弯/紧收尾）/
+          AI 换纯追踪走线+提前扫描刹车（修最后一弯冲出赛道）/
+          AI 直道尾速压到玩家之下、弯道提速 / 尾流：贴住前车尾部极速 ×1.25
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
 var W = 1100, H = 750, CX = W / 2, CY = H / 2;
 
-// ---------- 赛道中线（蒙扎式：主直道+Rettifilo+Curva Grande+Roggia+Lesmo+Ascari+Parabolica） ----------
+// ---------- 赛道中线（眼镜蛇赛道：主直道+大发卡+连续S弯+全速扫弯+之字弯+紧收尾） ----------
 var TRACK = [
-  [350,1150],[1750,1150],                              // 主直道
-  [1900,1120],[1960,1030],[1880,960],                  // Rettifilo 右-左减速弯
-  [1970,820],[1990,620],                               // Curva Grande 全速弯
-  [1940,500],[1820,440],[1860,340],                    // Roggia 左-右
-  [1770,290],[1600,310],                               // Lesmo 1
-  [1450,380],[1330,340],                               // Lesmo 2
-  [1120,310],[850,330],                                // 后直道
-  [700,380],[560,340],[480,420],[560,520],             // Ascari 左-右-左
-  [430,650],[380,820],[390,980],[330,1090]             // Parabolica 长右手弯回主直道
+  [300,1150],[1500,1150],                                // 主直道（起终点）
+  [1690,1120],[1800,1035],[1750,930],[1600,905],         // T1 大发卡（右，180° 掉头）
+  [1450,905],                                            // 出卡短直道
+  [1310,850],[1190,920],[1070,835],[1000,720],           // 连续 S 弯（左右左）
+  [960,580],[955,450],[990,330],                         // 全速扫弯（向北）
+  [900,225],[765,185],[640,265],[590,400],               // 之字减速弯
+  [580,540],[600,700],                                   // 后直道（向南）
+  [575,840],[480,945],[350,1000],[215,1070],[170,1150]   // 最后连续弯 + 紧收尾上主直道
 ];
 var SEGN = TRACK.length;
 var ROAD_HALF = 84;
@@ -228,11 +226,11 @@ function stepCar(c, dt, isPlayer) {
   var onRoad = ns.d < ROAD_HALF + 8;
 
   if (isPlayer) {
-    if (kU()) c.speed += (onRoad ? 150 : 45) * dt;   // 草地上油门没劲（速度才降得下来）
+    if (kU()) c.speed += (onRoad ? (c.slip ? 190 : 150) : 45) * dt;   // 草地上油门没劲（速度才降得下来）
     if (kD()) c.speed -= 430 * dt;                   // F1 刹车很猛
   }
   c.speed -= c.speed * 0.22 * dt;
-  var cap = 330;
+  var cap = c.slip ? 412 : 330;                      // 尾流里极速 ×1.25
   if (c.speed > cap) c.speed -= (c.speed - cap) * 2.5 * dt + 30 * dt;
   if (c.speed < 0) c.speed = 0;
 
@@ -285,24 +283,84 @@ function stepCar(c, dt, isPlayer) {
   c.lapT += dt;
 }
 
-// ---------- AI：沿中线走，弯前减速，难度系数 ----------
+// ---------- AI：纯追踪走线 + 提前扫描刹车 + 难度系数 ----------
+function nearestOnTrack(px, py) {
+  var bi = 0, bt = 0, bd = 1e9;
+  for (var i = 0; i < SEGN; i++) {
+    var a = TRACK[i], b = TRACK[(i+1) % SEGN];
+    var vx = b[0]-a[0], vy = b[1]-a[1];
+    var t = ((px-a[0])*vx + (py-a[1])*vy) / (vx*vx+vy*vy);
+    t = t < 0 ? 0 : (t > 1 ? 1 : t);
+    var x = a[0]+vx*t, y = a[1]+vy*t;
+    var d = (px-x)*(px-x) + (py-y)*(py-y);
+    if (d < bd) { bd = d; bi = i; bt = t; }
+  }
+  return { i: bi, t: bt, d: Math.sqrt(bd) };
+}
+function turnAt(j) {   // 顶点 j 的弯度：0 = 笔直，2 = 原地掉头
+  var a = TRACK[(j+SEGN-1) % SEGN], b = TRACK[j], d = TRACK[(j+1) % SEGN];
+  var v1x = b[0]-a[0], v1y = b[1]-a[1], v2x = d[0]-b[0], v2y = d[1]-b[1];
+  var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
+  return 1 - (v1x*v2x + v1y*v2y) / (m1*m2);
+}
+function aheadPt(pos, dist) {   // 沿中线从 pos 往前走 dist 的点
+  var i = pos.i, t = pos.t, left = dist;
+  for (var n = 0; n < SEGN + 2; n++) {
+    var a = TRACK[i], b = TRACK[(i+1) % SEGN];
+    var len = Math.sqrt((b[0]-a[0])*(b[0]-a[0]) + (b[1]-a[1])*(b[1]-a[1])) || 1;
+    var rem = len * (1 - t);
+    if (left <= rem) return [a[0] + (b[0]-a[0]) * (t + left/len), a[1] + (b[1]-a[1]) * (t + left/len)];
+    left -= rem; i = (i+1) % SEGN; t = 0;
+  }
+  return TRACK[0];
+}
 function aiDrive(c, dt) {
-  var ns = nearestSeg(c.x, c.y);
-  var look = TRACK[(ns.i + 2) % SEGN];
-  var want = Math.atan2(look[1] - c.y, look[0] - c.x);
+  var D = DIFFAI[diffIdx];
+  var pos = nearestOnTrack(c.x, c.y);
+
+  // 纯追踪：盯着前方一个点打方向，速度越快看得越远（不再死盯两个点外切草地）
+  var look = 85 + c.speed * 1.05;
+  if (pos.d > ROAD_HALF * 0.6) look *= 0.55;      // 快出赛道了：拉近目标点往回救
+  var tp = aheadPt(pos, look);
+  var want = Math.atan2(tp[1] - c.y, tp[0] - c.x);
   var diff = want - c.angle;
   while (diff > Math.PI) diff -= Math.PI * 2;
   while (diff < -Math.PI) diff += Math.PI * 2;
   var grip = 3.0 - Math.min(c.speed / 330, 1) * 1.1;
-  c.angle += Math.max(-grip * dt, Math.min(grip * dt, diff * 3 * dt));
+  c.angle += Math.max(-grip * dt, Math.min(grip * dt, diff * 4 * dt));
 
-  var a = TRACK[ns.i], b = TRACK[(ns.i+1) % SEGN], d = TRACK[(ns.i+2) % SEGN];
-  var v1x = b[0]-a[0], v1y = b[1]-a[1], v2x = d[0]-b[0], v2y = d[1]-b[1];
-  var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
-  var turn = 1 - (v1x*v2x + v1y*v2y) / (m1 * m2);
-  var want2 = (375 - turn * 235) * (c.aiSkill + DIFFAI[diffIdx].skill);
-  if (c.speed < want2) c.speed += 205 * DIFFAI[diffIdx].acc * dt;
-  else c.speed -= 380 * dt;
+  // 目标速度：扫一遍刹车距离内最急的弯；
+  // 直道尾速压在玩家(330)之下，弯道地板抬高——直道你追它、弯道它咬你
+  var straightV = 303 + c.team * 5 + D.skill * 55;
+  var brakeDist = c.speed * c.speed / 800 + 60;
+  var worst = turnAt((pos.i + 1) % SEGN);
+  var i = pos.i, acc = 0;
+  for (var n = 0; n < 12; n++) {
+    var a = TRACK[i], b = TRACK[(i+1) % SEGN];
+    acc += Math.sqrt((b[0]-a[0])*(b[0]-a[0]) + (b[1]-a[1])*(b[1]-a[1]));
+    if (acc > brakeDist) break;
+    i = (i+1) % SEGN;
+    var tw = turnAt((i+1) % SEGN);
+    if (tw > worst) worst = tw;
+  }
+  var want2 = (148 + (1 - Math.min(worst, 1.6) / 1.6) * (straightV - 148)) * (1 + D.skill * 0.4);
+  if (pos.d > ROAD_HALF * 0.6) want2 = Math.min(want2, 185);   // 贴边先稳住
+  if (c.speed < want2) c.speed += 205 * D.acc * dt;
+  else c.speed -= 400 * dt;
+}
+
+// ---------- 尾流：贴在前车正后方的尾流区（长2车位×宽1车位）里，极速 ×1.25 ----------
+function slipCheck(me) {
+  for (var i = 0; i < cars.length; i++) {
+    var o = cars[i];
+    if (o === me) continue;
+    var fx = Math.cos(o.angle), fy = Math.sin(o.angle);
+    var dx = me.x - o.x, dy = me.y - o.y;
+    var back = -(dx * fx + dy * fy);          // 正数 = 在 o 的正后方
+    var side = dx * (-fy) + dy * fx;
+    if (back > 10 && back < 150 && Math.abs(side) < 34 && o.speed > 110) return true;
+  }
+  return false;
 }
 
 // ---------- 火花粒子 ----------
@@ -398,8 +456,8 @@ function update(dt) {
   for (var i = 0; i < cars.length; i++) {
     var c = cars[i];
     if (c.finished) { c.speed *= (1 - dt * 0.8); }
-    if (c.team === 0) stepCar(c, dt, true);
-    else { aiDrive(c, dt); stepCar(c, dt, false); }
+    if (c.team === 0) { c.slip = slipCheck(c); stepCar(c, dt, true); }
+    else { c.slip = false; aiDrive(c, dt); stepCar(c, dt, false); }
   }
   carCollide(dt);
   stepSparks(dt);
@@ -523,7 +581,11 @@ function drawHUD() {
   ctx.fillText('第 ' + Math.min(me.lap, TOTAL_LAPS) + ' / ' + TOTAL_LAPS + ' 圈', 18, 26);
   ctx.fillStyle = '#c8d3de'; ctx.font = 'bold 16px sans-serif';
   ctx.fillText('车速 ' + Math.round(me.speed) + ' km/h', 170, 26);
-  ctx.fillText('名次 P' + positionOf(me), 330, 26);
+  if (me.slip) {                                   // 尾流提示
+    ctx.fillStyle = '#6ee7ff';
+    ctx.fillText('⚡尾流 ×1.25', 330, 26);
+  }
+  ctx.fillText('名次 P' + positionOf(me), 480, 26);
   ctx.textAlign = 'right';
   ctx.fillText('本圈 ' + fmtT(me.lapT), W - 190, 26);
   ctx.fillStyle = '#8fd0a8';
@@ -547,9 +609,9 @@ function drawMenu() {
   ctx.fillStyle = '#ffffff'; ctx.font = 'bold 54px sans-serif';
   ctx.fillText('极速弯心', CX, 230);
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
-  ctx.fillText('APEX RACER · 蒙扎式赛道 · 镜头跟随', CX, 285);
+  ctx.fillText('APEX RACER · 眼镜蛇赛道 · 大发卡+连续S弯', CX, 285);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.8.0', CX, 318);
+  ctx.fillText('v0.9.0', CX, 318);
   // 难度按钮（鼠标点击选择）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('AI 难度（点击选择）', CX, 400);
@@ -572,7 +634,7 @@ function drawMenu() {
   BTNS.push({ x: CX - 150, y: 505, w: 300, h: 62, fn: startRace });
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
   ctx.fillText('↑/W 油门 · ↓/S 刹车 · ←→/AD 转向', CX, 525);
-  ctx.fillText('出赛道会滑进草地，慢下来后自动复位 · 弯前记得刹车 · V 切换镜头（近追/全景）', CX, 560);
+  ctx.fillText('出赛道会滑进草地，慢下来后自动复位 · 跟住前车尾部吃尾流可提速超车 · V 切换镜头', CX, 560);
 }
 function drawOver() {
   var me = cars[0];
@@ -612,6 +674,18 @@ function draw() {
   }
   drawTrack();
   for (var i = cars.length - 1; i >= 0; i--) drawCar(cars[i]);
+  if (cars[0] && cars[0].slip) {                    // 尾流速度线（贴在玩家车后）
+    var me0 = cars[0];
+    var fx0 = Math.cos(me0.angle), fy0 = Math.sin(me0.angle);
+    ctx.strokeStyle = 'rgba(110,231,255,0.55)'; ctx.lineWidth = 2.5;
+    for (var si = 0; si < 3; si++) {
+      var off = (si - 1) * 16 + (Math.random() - 0.5) * 5;
+      var bx = me0.x - fx0 * (34 + si * 14) - fy0 * off;
+      var by = me0.y - fy0 * (34 + si * 14) + fx0 * off;
+      ctx.beginPath(); ctx.moveTo(bx, by);
+      ctx.lineTo(bx - fx0 * 28, by - fy0 * 28); ctx.stroke();
+    }
+  }
   drawSparks();
   ctx.restore();
   drawHUD();
