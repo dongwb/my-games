@@ -15,46 +15,85 @@
 <body>
 <div id="wrap">
   <canvas id="cv" width="1100" height="750"></canvas>
-  <div id="hint"><b>↑/W</b> 油门 · <b>↓/S</b> 刹车 · <b>←→/AD</b> 转向 · <b>Enter</b> 发车 · 菜单 <b>A/D</b> 选难度</div>
+  <div id="hint"><b>↑/W</b> 油门 · <b>↓/S</b> 刹车 · <b>←→/AD</b> 转向 · <b>V</b> 镜头 · 菜单 <b>Q/E</b> 选赛道 <b>A/D</b> 选难度</div>
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.9.0
-   俯视 F1：眼镜蛇赛道（大发卡+连续S弯）+ 向量物理 + 尾流超车
-   v0.8.0：鼠标点击时代——大厅点按钮选难度+发车，比赛中点按钮切镜头 /
-          路肩防重叠 / 路面再加宽
-   v0.9.0：全新眼镜蛇赛道（大发卡弯/连续S弯/之字弯/紧收尾）/
-          AI 换纯追踪走线+提前扫描刹车（修最后一弯冲出赛道）/
-          AI 直道尾速压到玩家之下、弯道提速 / 尾流：贴住前车尾部极速 ×1.25
+   极速弯心 APEX RACER · v0.10.0
+   俯视 F1：三条特色赛道 + 向量物理 + 尾流超车
+   v0.9.0：眼镜蛇赛道 / AI 纯追踪走线 / 尾流 ×1.25
+   v0.10.0：赛道库（🐍眼镜蛇/🌀漩涡/🪓战斧，大厅鼠标选图）/
+          AI 赛车线：压弯内侧贴路肩走 / 路肩重画：贴弯道内侧
+          沥青边缘沿整条弯弧排开 / 尾流 ×1.1 + 流动空气带视效 /
+          修 V 键切镜头失效
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
 var W = 1100, H = 750, CX = W / 2, CY = H / 2;
 
-// ---------- 赛道中线（眼镜蛇赛道：主直道+大发卡+连续S弯+全速扫弯+之字弯+紧收尾） ----------
-var TRACK = [
-  [300,1150],[1500,1150],                                // 主直道（起终点）
-  [1690,1120],[1800,1035],[1750,930],[1600,905],         // T1 大发卡（右，180° 掉头）
-  [1450,905],                                            // 出卡短直道
-  [1310,850],[1190,920],[1070,835],[1000,720],           // 连续 S 弯（左右左）
-  [960,580],[955,450],[990,330],                         // 全速扫弯（向北）
-  [900,225],[765,185],[640,265],[590,400],               // 之字减速弯
-  [580,540],[600,700],                                   // 后直道（向南）
-  [575,840],[480,945],[350,1000],[215,1070],[170,1150]   // 最后连续弯 + 紧收尾上主直道
+// ---------- 赛道库 ----------
+// 每条赛道约定：pts[0]→pts[1] 是主直道（行进方向），startS = 起点线距 pts[0] 的沿道距离
+var TRACKS = [
+  { name:'眼镜蛇', en:'COBRA', startS:400, pts:[
+    [300,1150],[1500,1150],                                // 主直道（起终点）
+    [1690,1120],[1800,1035],[1750,930],[1600,905],         // T1 大发卡（右，180° 掉头）
+    [1450,905],                                            // 出卡短直道
+    [1310,850],[1190,920],[1070,835],[1000,720],           // 连续 S 弯（左右左）
+    [960,580],[955,450],[990,330],                         // 全速扫弯（向北）
+    [900,225],[765,185],[640,265],[590,400],               // 之字减速弯
+    [580,540],[600,700],                                   // 后直道（向南）
+    [575,840],[480,945],[350,1000],[215,1070],[170,1150]   // 最后连续弯 + 紧收尾
+  ] },
+  { name:'漩涡', en:'VORTEX', startS:400, pts:[
+    [250,1080],[1350,1080],                                // 主直道
+    [1530,1040],[1650,900],[1690,720],[1650,560],          // 大弧度右扫弯（全速）
+    [1560,430],[1410,360],[1260,380],                      // 顶部左弯
+    [1130,480],[1090,610],[1140,730],                      // 螺旋收拢（半径越收越小）
+    [1010,800],[860,790],                                  // 出螺旋短直道
+    [720,720],[700,580],[780,470],                         // 内钩之字
+    [720,340],[580,280],[450,320],                         // 左上组合弯
+    [330,430],[280,600],[300,780],                         // 左侧长左弯
+    [240,920],[230,1040]                                   // 收尾回主直道
+  ] },
+  { name:'战斧', en:'TOMAHAWK', startS:400, pts:[
+    [300,1120],[1200,1120],                                // 主直道（短）
+    [1360,1090],[1460,980],[1440,840],                     // T1-T2 右弯组
+    [1520,700],[1640,640],[1690,520],                      // 加速上山弯
+    [1700,350],[1620,240],[1470,230],[1380,330],[1330,470],// 山顶双顶点发卡
+    [1240,600],[1150,720],[1010,770],                      // 下切进内场
+    [860,740],[790,620],[830,480],                         // 内场 S 弯
+    [730,370],[590,320],[460,370],                         // 左上弯组
+    [360,490],[330,660],[370,820],                         // 左侧下行
+    [310,950],[270,1070]                                   // 收尾回主直道
+  ] }
 ];
-var SEGN = TRACK.length;
+var trackIdx = 0;
+var TRACK, SEGN;
 var ROAD_HALF = 84;
-var START_X = 700;             // 起点线在主直道
+var START_S = 400;          // 起点线在主直道上距 pts[0] 的距离
 var TOTAL_LAPS = 5;
 
-// 赛道边界（镜头限制用）
-var BD = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
-for (var bi = 0; bi < SEGN; bi++) {
-  BD.x0 = Math.min(BD.x0, TRACK[bi][0]); BD.x1 = Math.max(BD.x1, TRACK[bi][0]);
-  BD.y0 = Math.min(BD.y0, TRACK[bi][1]); BD.y1 = Math.max(BD.y1, TRACK[bi][1]);
+// 赛道边界（镜头限制用）+ 主直道方向（压线判定/发车格用）
+var BD = { x0: 0, y0: 0, x1: 0, y1: 0 };
+var SEG0X = 1, SEG0Y = 0, SEG0OX = 0, SEG0OY = 0;
+function selectTrack(k) {
+  trackIdx = ((k % TRACKS.length) + TRACKS.length) % TRACKS.length;
+  TRACK = TRACKS[trackIdx].pts;
+  SEGN = TRACK.length;
+  START_S = TRACKS[trackIdx].startS;
+  BD = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
+  for (var bi = 0; bi < SEGN; bi++) {
+    BD.x0 = Math.min(BD.x0, TRACK[bi][0]); BD.x1 = Math.max(BD.x1, TRACK[bi][0]);
+    BD.y0 = Math.min(BD.y0, TRACK[bi][1]); BD.y1 = Math.max(BD.y1, TRACK[bi][1]);
+  }
+  var MARGIN = 300;
+  BD.x0 -= MARGIN; BD.y0 -= MARGIN; BD.x1 += MARGIN; BD.y1 += MARGIN;
+  SEG0OX = TRACK[0][0]; SEG0OY = TRACK[0][1];
+  var dx = TRACK[1][0] - SEG0OX, dy = TRACK[1][1] - SEG0OY;
+  var dm = Math.sqrt(dx*dx + dy*dy) || 1;
+  SEG0X = dx / dm; SEG0Y = dy / dm;
 }
-var MARGIN = 300;
-BD.x0 -= MARGIN; BD.y0 -= MARGIN; BD.x1 += MARGIN; BD.y1 += MARGIN;
+selectTrack(0);
 
 // ---------- 镜头（0=近追 1=全景，按 V 切换） ----------
 var cam = { x: 0, y: 0 };
@@ -162,7 +201,7 @@ function mkCar(i, gx, gy) {
     team: i, x: gx, y: gy, angle: 0, speed: 0, latS: 0,
     lap: 0, lastSeg: SEGN - 2, lapT: 0, bestLap: 0,
     aiSkill: 0.97 + i * 0.035, finished: false, finishT: 0,
-    offT: 0, rejoinX: 0, rejoinY: 0, prevX: gx
+    offT: 0, rejoinX: 0, rejoinY: 0, prevX: gx, prevY: gy
   };
 }
 var state = 'menu';
@@ -170,8 +209,14 @@ var raceT = 0, startLights = 0;
 
 function startRace() {
   cars = [];
-  var grid = [[640,1125],[585,1175],[530,1125],[475,1175]];
-  for (var i = 0; i < 4; i++) cars.push(mkCar(i, grid[i][0], grid[i][1]));
+  var offs = [[-60,-28],[-115,28],[-170,-28],[-225,28]];   // 发车格（相对起点线：沿道后退/横向交错）
+  var nx = -SEG0Y, ny = SEG0X;
+  for (var i = 0; i < 4; i++) {
+    var s = START_S + offs[i][0], l = offs[i][1];
+    var c = mkCar(i, SEG0OX + SEG0X*s + nx*l, SEG0OY + SEG0Y*s + ny*l);
+    c.angle = Math.atan2(SEG0Y, SEG0X);
+    cars.push(c);
+  }
   raceT = 0; startLights = 2.2; sparks = [];
   state = 'race';
   engineStart();
@@ -187,8 +232,11 @@ addEventListener('keydown', function (e) {
   if (state === 'menu') {
     if (k === 'a' || k === 'arrowleft')  diffIdx = (diffIdx + 2) % 3;
     if (k === 'd' || k === 'arrowright') diffIdx = (diffIdx + 1) % 3;
+    if (k === 'q') selectTrack(trackIdx + 2);
+    if (k === 'e') selectTrack(trackIdx + 1);
     if (k === 'enter') startRace();
-    if (state === 'race' && k === 'v') camMode = 1 - camMode;   // 比赛中 V 切镜头
+  } else if (state === 'race') {
+    if (k === 'v') camMode = 1 - camMode;            // 比赛中 V 切镜头
   } else if (state === 'over') {
     if (k === 'enter') state = 'menu';
   }
@@ -221,16 +269,16 @@ function kD() { return KEYS['arrowdown'] || KEYS['s']; }
 
 // ---------- 物理（向量模型：纵向油门 + 横向抓地甩尾） ----------
 function stepCar(c, dt, isPlayer) {
-  c.prevX = c.x;                           // 本帧起始位置（压线判定用）
+  c.prevX = c.x; c.prevY = c.y;              // 本帧起始位置（压线判定用）
   var ns = nearestSeg(c.x, c.y);
   var onRoad = ns.d < ROAD_HALF + 8;
 
   if (isPlayer) {
-    if (kU()) c.speed += (onRoad ? (c.slip ? 190 : 150) : 45) * dt;   // 草地上油门没劲（速度才降得下来）
+    if (kU()) c.speed += (onRoad ? (c.slip ? 170 : 150) : 45) * dt;   // 草地上油门没劲（速度才降得下来）
     if (kD()) c.speed -= 430 * dt;                   // F1 刹车很猛
   }
   c.speed -= c.speed * 0.22 * dt;
-  var cap = c.slip ? 412 : 330;                      // 尾流里极速 ×1.25
+  var cap = c.slip ? 363 : 330;                      // 尾流里极速 ×1.1
   if (c.speed > cap) c.speed -= (c.speed - cap) * 2.5 * dt + 30 * dt;
   if (c.speed < 0) c.speed = 0;
 
@@ -267,8 +315,10 @@ function stepCar(c, dt, isPlayer) {
     }
   } else c.offT = 0;
 
-  // 圈数：真的压过起点线才算（上一帧在线左、这一帧在线右），不再提前一车位弹提示
-  if (ns.i === 0 && c.prevX < START_X && c.x >= START_X && c.speed > 40 && c.lapT > 8) {
+  // 圈数：真的压过起点线才算（沿主直道方向的投影跨过起点线），不再提前一车位弹提示
+  var sPrev = (c.prevX - SEG0OX) * SEG0X + (c.prevY - SEG0OY) * SEG0Y;
+  var sNow  = (c.x - SEG0OX) * SEG0X + (c.y - SEG0OY) * SEG0Y;
+  if (ns.i === 0 && sPrev < START_S && sNow >= START_S && c.speed > 40 && c.lapT > 8) {
     if (c.lap > 0) {
       if (!c.bestLap || c.lapT < c.bestLap) c.bestLap = c.lapT;
       if (c.team === 0) beep(880, 0.15, 0.06);
@@ -303,6 +353,14 @@ function turnAt(j) {   // 顶点 j 的弯度：0 = 笔直，2 = 原地掉头
   var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
   return 1 - (v1x*v2x + v1y*v2y) / (m1*m2);
 }
+function insideDir(j) {   // 顶点 j 弯内侧的单位方向（路肩和赛车线都用它）
+  var a = TRACK[(j+SEGN-1) % SEGN], b = TRACK[j], d = TRACK[(j+1) % SEGN];
+  var v1x = b[0]-a[0], v1y = b[1]-a[1], v2x = d[0]-b[0], v2y = d[1]-b[1];
+  var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
+  var ix = v2x/m2 - v1x/m1, iy = v2y/m2 - v1y/m1;
+  var im = Math.sqrt(ix*ix + iy*iy) || 1;
+  return [ix/im, iy/im];
+}
 function aheadPt(pos, dist) {   // 沿中线从 pos 往前走 dist 的点
   var i = pos.i, t = pos.t, left = dist;
   for (var n = 0; n < SEGN + 2; n++) {
@@ -322,6 +380,25 @@ function aiDrive(c, dt) {
   var look = 85 + c.speed * 1.05;
   if (pos.d > ROAD_HALF * 0.6) look *= 0.55;      // 快出赛道了：拉近目标点往回救
   var tp = aheadPt(pos, look);
+
+  // 赛车线：追踪点前方有弯就把目标压向弯内侧——贴着路肩过弯
+  var apexI = -1, apexTurn = 0.12;
+  var ii = pos.i, aa = 0;
+  for (var n2 = 0; n2 < 8; n2++) {
+    var a3 = TRACK[ii], b3 = TRACK[(ii+1) % SEGN];
+    var sl = Math.sqrt((b3[0]-a3[0])*(b3[0]-a3[0]) + (b3[1]-a3[1])*(b3[1]-a3[1]));
+    aa += sl * (n2 === 0 ? (1 - pos.t) : 1);
+    if (aa > look + 50) break;
+    ii = (ii+1) % SEGN;
+    var tw3 = turnAt(ii);
+    if (tw3 > apexTurn) { apexTurn = tw3; apexI = ii; }
+  }
+  if (apexI >= 0) {
+    var ind2 = insideDir(apexI);
+    var cutAmt = Math.min(46, 20 + apexTurn * 30);
+    tp[0] += ind2[0] * cutAmt; tp[1] += ind2[1] * cutAmt;
+  }
+
   var want = Math.atan2(tp[1] - c.y, tp[0] - c.x);
   var diff = want - c.angle;
   while (diff > Math.PI) diff -= Math.PI * 2;
@@ -349,7 +426,7 @@ function aiDrive(c, dt) {
   else c.speed -= 400 * dt;
 }
 
-// ---------- 尾流：贴在前车正后方的尾流区（长2车位×宽1车位）里，极速 ×1.25 ----------
+// ---------- 尾流：贴在前车正后方的尾流区（长2车位×宽1车位）里，极速 ×1.1 ----------
 function slipCheck(me) {
   for (var i = 0; i < cars.length; i++) {
     var o = cars[i];
@@ -358,9 +435,9 @@ function slipCheck(me) {
     var dx = me.x - o.x, dy = me.y - o.y;
     var back = -(dx * fx + dy * fy);          // 正数 = 在 o 的正后方
     var side = dx * (-fy) + dy * fx;
-    if (back > 10 && back < 150 && Math.abs(side) < 34 && o.speed > 110) return true;
+    if (back > 10 && back < 150 && Math.abs(side) < 34 && o.speed > 110) return o;
   }
-  return false;
+  return null;
 }
 
 // ---------- 火花粒子 ----------
@@ -456,8 +533,8 @@ function update(dt) {
   for (var i = 0; i < cars.length; i++) {
     var c = cars[i];
     if (c.finished) { c.speed *= (1 - dt * 0.8); }
-    if (c.team === 0) { c.slip = slipCheck(c); stepCar(c, dt, true); }
-    else { c.slip = false; aiDrive(c, dt); stepCar(c, dt, false); }
+    if (c.team === 0) { c.slipFrom = slipCheck(c); c.slip = !!c.slipFrom; stepCar(c, dt, true); }
+    else { c.slip = false; c.slipFrom = null; aiDrive(c, dt); stepCar(c, dt, false); }
   }
   carCollide(dt);
   stepSparks(dt);
@@ -490,45 +567,59 @@ function drawTrack() {
   for (i = 1; i < SEGN; i++) ctx.lineTo(TRACK[i][0], TRACK[i][1]);
   ctx.closePath(); ctx.stroke();
 
-  // 弯心香肠路肩：只在真正要压的急弯画（弯内侧，贴地逐颗排开）
+  // 弯心香肠路肩：贴着弯道内侧的沥青边缘，沿整条弯弧排开（真正的弯心位置）
   var lastKx = -1e9, lastKy = 0;
   for (i = 0; i < SEGN; i++) {
-    var ka = TRACK[i], kb = TRACK[(i+1) % SEGN], kd = TRACK[(i+2) % SEGN];
-    var v1x = kb[0]-ka[0], v1y = kb[1]-ka[1], v2x = kd[0]-kb[0], v2y = kd[1]-kb[1];
-    var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
-    if (1 - (v1x*v2x + v1y*v2y) / (m1*m2) < 0.35) continue;
+    var turnK = turnAt(i);
+    if (turnK < 0.35) continue;
+    var kb = TRACK[i];
     if (Math.abs(kb[0]-lastKx) + Math.abs(kb[1]-lastKy) < 100) continue;   // 跟上一个路肩太近就跳过（防重叠）
     lastKx = kb[0]; lastKy = kb[1];
-    var inX = v2x/m2 - v1x/m1, inY = v2y/m2 - v1y/m1;
-    var im = Math.sqrt(inX*inX + inY*inY) || 1;
-    inX /= im; inY /= im;
-    var e1x = kb[0] - v1x/m1*34 + inX*(ROAD_HALF+2), e1y = kb[1] - v1y/m1*34 + inY*(ROAD_HALF+2);
-    var e2x = kb[0] + v2x/m2*34 + inX*(ROAD_HALF+2), e2y = kb[1] + v2y/m2*34 + inY*(ROAD_HALF+2);
-    var ccx = kb[0] + inX*(ROAD_HALF+7), ccy = kb[1] + inY*(ROAD_HALF+7);
+    var ka = TRACK[(i+SEGN-1) % SEGN], kd = TRACK[(i+1) % SEGN];
+    var v1x = kb[0]-ka[0], v1y = kb[1]-ka[1], v2x = kd[0]-kb[0], v2y = kd[1]-kb[1];
+    var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
+    var ind = insideDir(i);
+    // 两条邻边各自指向弯内侧的法线
+    var n1x = -v1y/m1, n1y = v1x/m1;
+    if (n1x*ind[0] + n1y*ind[1] < 0) { n1x = -n1x; n1y = -n1y; }
+    var n2x = -v2y/m2, n2y = v2x/m2;
+    if (n2x*ind[0] + n2y*ind[1] < 0) { n2x = -n2x; n2y = -n2y; }
+    // 路肩弧线 = 以弯心顶点为圆心、半径=路面半宽，从入弯边法线扫到出弯边法线
+    var RK = ROAD_HALF + 4;
+    var cosT = Math.max(-1, Math.min(1, n1x*n2x + n1y*n2y));
+    var cosH = Math.sqrt((1 + cosT) / 2) || 0.6;
+    var e1x = kb[0] + n1x*RK, e1y = kb[1] + n1y*RK;
+    var e2x = kb[0] + n2x*RK, e2y = kb[1] + n2y*RK;
+    var ccx = kb[0] + ind[0]*(RK/cosH), ccy = kb[1] + ind[1]*(RK/cosH);
+    var pieces = Math.max(5, Math.round(RK * Math.acos(cosT) / 16));
     // 先描一道深色底边让路肩"贴地"，再逐颗排香肠
-    ctx.strokeStyle = 'rgba(20,24,30,0.55)'; ctx.lineWidth = 11; ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(20,24,30,0.55)'; ctx.lineWidth = 13; ctx.lineCap = 'round';
     ctx.beginPath(); ctx.moveTo(e1x, e1y); ctx.quadraticCurveTo(ccx, ccy, e2x, e2y); ctx.stroke();
-    for (var t2 = 0; t2 <= 1.001; t2 += 1 / 7) {
+    for (var t2 = 0; t2 <= 1.001; t2 += 1 / pieces) {
       var qx = (1-t2)*(1-t2)*e1x + 2*(1-t2)*t2*ccx + t2*t2*e2x;
       var qy = (1-t2)*(1-t2)*e1y + 2*(1-t2)*t2*ccy + t2*t2*e2y;
       var txx = 2*(1-t2)*(ccx-e1x) + 2*t2*(e2x-ccx);
       var tyy = 2*(1-t2)*(ccy-e1y) + 2*t2*(e2y-ccy);
       var kAng = Math.atan2(tyy, txx);
       ctx.save(); ctx.translate(qx, qy); ctx.rotate(kAng);
-      ctx.fillStyle = (Math.round(t2 * 7) % 2) ? '#c0392b' : '#f2f2f2';
+      ctx.fillStyle = (Math.round(t2 * pieces) % 2) ? '#c0392b' : '#f2f2f2';
       ctx.beginPath();
-      ctx.moveTo(-3.5, -4);
-      ctx.arcTo(6.5, -4, 6.5, 4, 3); ctx.arcTo(6.5, 4, -6.5, 4, 3);
-      ctx.arcTo(-6.5, 4, -6.5, -4, 3); ctx.arcTo(-6.5, -4, 6.5, -4, 3);
+      ctx.moveTo(-3.5, -5);
+      ctx.arcTo(6.5, -5, 6.5, 5, 3); ctx.arcTo(6.5, 5, -6.5, 5, 3);
+      ctx.arcTo(-6.5, 5, -6.5, -5, 3); ctx.arcTo(-6.5, -5, 6.5, -5, 3);
       ctx.closePath(); ctx.fill();
       ctx.restore();
     }
   }
-  // 起点黑白格
+  // 起点黑白格（横在主直道上，跟赛道方向走）
+  ctx.save();
+  ctx.translate(SEG0OX + SEG0X * START_S, SEG0OY + SEG0Y * START_S);
+  ctx.rotate(Math.atan2(SEG0Y, SEG0X));
   for (var gx = 0; gx < 4; gx++) for (var gy = 0; gy < 8; gy++) {
     ctx.fillStyle = (gx + gy) % 2 ? '#111' : '#fff';
-    ctx.fillRect(START_X - 8 + gx * 4, 1150 - ROAD_HALF + gy * (ROAD_HALF * 2 / 8), 4, ROAD_HALF * 2 / 8);
+    ctx.fillRect(-8 + gx * 4, -ROAD_HALF + gy * (ROAD_HALF * 2 / 8), 4, ROAD_HALF * 2 / 8);
   }
+  ctx.restore();
 }
 function drawCar(c) {
   var T = TEAMS[c.team];
@@ -583,7 +674,7 @@ function drawHUD() {
   ctx.fillText('车速 ' + Math.round(me.speed) + ' km/h', 170, 26);
   if (me.slip) {                                   // 尾流提示
     ctx.fillStyle = '#6ee7ff';
-    ctx.fillText('⚡尾流 ×1.25', 330, 26);
+    ctx.fillText('⚡尾流 ×1.1', 330, 26);
   }
   ctx.fillText('名次 P' + positionOf(me), 480, 26);
   ctx.textAlign = 'right';
@@ -607,17 +698,32 @@ function drawMenu() {
   ctx.fillStyle = '#121821'; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
   ctx.fillStyle = '#ffffff'; ctx.font = 'bold 54px sans-serif';
-  ctx.fillText('极速弯心', CX, 230);
+  ctx.fillText('极速弯心', CX, 160);
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
-  ctx.fillText('APEX RACER · 眼镜蛇赛道 · 大发卡+连续S弯', CX, 285);
+  ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.9.0', CX, 318);
+  ctx.fillText('v0.10.0', CX, 242);
+  // 赛道按钮（鼠标点击选择，Q/E 也行）
+  ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
+  ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
+  var icons = ['🐍', '🌀', '🪓'];
+  var bw2 = 180, bh2 = 54;
+  for (var ti = 0; ti < TRACKS.length; ti++) {
+    var tx = CX - 280 + ti * 190, ty = 318;
+    ctx.fillStyle = ti === trackIdx ? 'rgba(110,231,255,0.15)' : 'rgba(255,255,255,0.07)';
+    btnPath(tx, ty, bw2, bh2, 10); ctx.fill();
+    if (ti === trackIdx) { ctx.strokeStyle = '#6ee7ff'; ctx.lineWidth = 2; ctx.stroke(); }
+    ctx.fillStyle = ti === trackIdx ? '#6ee7ff' : '#aab6c4';
+    ctx.font = 'bold 19px sans-serif';
+    ctx.fillText(icons[ti] + ' ' + TRACKS[ti].name, tx + bw2 / 2, ty + bh2 / 2 + 1);
+    (function (idx) { BTNS.push({ x: tx, y: ty, w: bw2, h: bh2, fn: function () { selectTrack(idx); } }); })(ti);
+  }
   // 难度按钮（鼠标点击选择）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
-  ctx.fillText('AI 难度（点击选择）', CX, 400);
+  ctx.fillText('AI 难度（点击选择，A/D 切换）', CX, 425);
   var bw = 150, bh = 54;
   for (var i = 0; i < 3; i++) {
-    var bx = CX - 245 + i * 170, by = 420;
+    var bx = CX - 245 + i * 170, by = 443;
     ctx.fillStyle = i === diffIdx ? 'rgba(255,225,77,0.18)' : 'rgba(255,255,255,0.07)';
     btnPath(bx, by, bw, bh, 10); ctx.fill();
     if (i === diffIdx) { ctx.strokeStyle = '#ffe14d'; ctx.lineWidth = 2; ctx.stroke(); }
@@ -628,13 +734,13 @@ function drawMenu() {
   }
   // 大开始按钮
   ctx.fillStyle = '#D92B2B';
-  btnPath(CX - 150, 505, 300, 62, 14); ctx.fill();
+  btnPath(CX - 170, 535, 340, 62, 14); ctx.fill();
   ctx.fillStyle = '#ffffff'; ctx.font = 'bold 24px sans-serif';
-  ctx.fillText('🏁 发车（或按 Enter）', CX, 537);
-  BTNS.push({ x: CX - 150, y: 505, w: 300, h: 62, fn: startRace });
+  ctx.fillText('🏁 发车（或按 Enter）', CX, 567);
+  BTNS.push({ x: CX - 170, y: 535, w: 340, h: 62, fn: startRace });
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
-  ctx.fillText('↑/W 油门 · ↓/S 刹车 · ←→/AD 转向', CX, 525);
-  ctx.fillText('出赛道会滑进草地，慢下来后自动复位 · 跟住前车尾部吃尾流可提速超车 · V 切换镜头', CX, 560);
+  ctx.fillText('↑/W 油门 · ↓/S 刹车 · ←→/AD 转向', CX, 655);
+  ctx.fillText('出赛道会滑进草地，慢下来后自动复位 · 跟住前车尾部吃尾流可提速超车 · V 切换镜头', CX, 685);
 }
 function drawOver() {
   var me = cars[0];
@@ -673,19 +779,29 @@ function draw() {
     ctx.translate(-cam.x, -cam.y);        // 近追：镜头跟随
   }
   drawTrack();
-  for (var i = cars.length - 1; i >= 0; i--) drawCar(cars[i]);
-  if (cars[0] && cars[0].slip) {                    // 尾流速度线（贴在玩家车后）
-    var me0 = cars[0];
-    var fx0 = Math.cos(me0.angle), fy0 = Math.sin(me0.angle);
-    ctx.strokeStyle = 'rgba(110,231,255,0.55)'; ctx.lineWidth = 2.5;
-    for (var si = 0; si < 3; si++) {
-      var off = (si - 1) * 16 + (Math.random() - 0.5) * 5;
-      var bx = me0.x - fx0 * (34 + si * 14) - fy0 * off;
-      var by = me0.y - fy0 * (34 + si * 14) + fx0 * off;
-      ctx.beginPath(); ctx.moveTo(bx, by);
-      ctx.lineTo(bx - fx0 * 28, by - fy0 * 28); ctx.stroke();
+  if (cars[0] && cars[0].slipFrom) {                  // 尾流带：前车尾部拖着一条向后流动的低压气带
+    var wo = cars[0].slipFrom;
+    ctx.save();
+    ctx.translate(wo.x, wo.y);
+    ctx.rotate(wo.angle);
+    var grad = ctx.createLinearGradient(-30, 0, -155, 0);
+    grad.addColorStop(0, 'rgba(150,215,255,0.20)');
+    grad.addColorStop(1, 'rgba(150,215,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(-26, -20); ctx.lineTo(-155, -32); ctx.lineTo(-155, 32); ctx.lineTo(-26, 20);
+    ctx.closePath(); ctx.fill();
+    ctx.lineWidth = 2;
+    for (var wi = 0; wi < 5; wi++) {                  // 气带里向后流动的空气线
+      var wt = (raceT * 2.4 + wi * 0.21) % 1;
+      var wx = -32 - wt * 116;
+      var wy = (wi - 2) * 11.5 + Math.sin(raceT * 7 + wi * 1.7) * 3;
+      ctx.strokeStyle = 'rgba(190,235,255,' + (0.5 * Math.sin(wt * Math.PI)).toFixed(2) + ')';
+      ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(wx - 15 - wt * 10, wy); ctx.stroke();
     }
+    ctx.restore();
   }
+  for (var i = cars.length - 1; i >= 0; i--) drawCar(cars[i]);
   drawSparks();
   ctx.restore();
   drawHUD();
