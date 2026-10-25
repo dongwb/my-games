@@ -19,13 +19,13 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.10.0
-   俯视 F1：三条特色赛道 + 向量物理 + 尾流超车
-   v0.9.0：眼镜蛇赛道 / AI 纯追踪走线 / 尾流 ×1.25
-   v0.10.0：赛道库（🐍眼镜蛇/🌀漩涡/🪓战斧，大厅鼠标选图）/
-          AI 赛车线：压弯内侧贴路肩走 / 路肩重画：贴弯道内侧
-          沥青边缘沿整条弯弧排开 / 尾流 ×1.1 + 流动空气带视效 /
-          修 V 键切镜头失效
+   极速弯心 APEX RACER · v0.11.0
+   俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车
+   v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
+          尾流 ×1.1 / 修 V 键
+   v0.11.0：赛道整体放大 ×1.55（一圈 30 多秒）/ 路肩系统重写——
+          连续同向弯算一条弯，沿内侧沥青边缘整段铺（治漩涡乱码）/
+          尾流存在感加强：更亮的气带 + 车身脉冲光圈 + 进尾流提示音
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -70,7 +70,8 @@ var TRACKS = [
 var trackIdx = 0;
 var TRACK, SEGN;
 var ROAD_HALF = 84;
-var START_S = 400;          // 起点线在主直道上距 pts[0] 的距离
+var TRACK_SCALE = 2.0;     // 赛道整体放大倍数（一圈 30 多秒）
+var START_S = 400;          // 起点线在主直道上距 pts[0] 的沿道距离（放大后）
 var TOTAL_LAPS = 5;
 
 // 赛道边界（镜头限制用）+ 主直道方向（压线判定/发车格用）
@@ -78,9 +79,18 @@ var BD = { x0: 0, y0: 0, x1: 0, y1: 0 };
 var SEG0X = 1, SEG0Y = 0, SEG0OX = 0, SEG0OY = 0;
 function selectTrack(k) {
   trackIdx = ((k % TRACKS.length) + TRACKS.length) % TRACKS.length;
-  TRACK = TRACKS[trackIdx].pts;
+  var raw = TRACKS[trackIdx].pts;
+  // 绕重心整体放大（弯的相对形状不变，路面宽度不变 → 弯相对更"宽"更好开）
+  var ccx = 0, ccy = 0;
+  for (var ci = 0; ci < raw.length; ci++) { ccx += raw[ci][0]; ccy += raw[ci][1]; }
+  ccx /= raw.length; ccy /= raw.length;
+  TRACK = [];
+  for (ci = 0; ci < raw.length; ci++) {
+    TRACK.push([Math.round(ccx + (raw[ci][0] - ccx) * TRACK_SCALE),
+                Math.round(ccy + (raw[ci][1] - ccy) * TRACK_SCALE)]);
+  }
   SEGN = TRACK.length;
-  START_S = TRACKS[trackIdx].startS;
+  START_S = TRACKS[trackIdx].startS * TRACK_SCALE;
   BD = { x0: 1e9, y0: 1e9, x1: -1e9, y1: -1e9 };
   for (var bi = 0; bi < SEGN; bi++) {
     BD.x0 = Math.min(BD.x0, TRACK[bi][0]); BD.x1 = Math.max(BD.x1, TRACK[bi][0]);
@@ -361,6 +371,87 @@ function insideDir(j) {   // 顶点 j 弯内侧的单位方向（路肩和赛车
   var im = Math.sqrt(ix*ix + iy*iy) || 1;
   return [ix/im, iy/im];
 }
+function crossAt(j) {   // 顶点 j 的转向（符号 = 左/右）
+  var a = TRACK[(j+SEGN-1) % SEGN], b = TRACK[j], d = TRACK[(j+1) % SEGN];
+  return (b[0]-a[0])*(d[1]-b[1]) - (b[1]-a[1])*(d[0]-b[0]);
+}
+
+// ---------- 路肩：连续同向弯算"一条弯"，沿内侧沥青边缘整段铺香肠 ----------
+function drawKerbRun(vs, ve) {
+  // 路径点列：入口 55px 前 → vs..ve 各顶点 → 出口 55px 后
+  var pts = [];
+  var a0 = TRACK[(vs+SEGN-1) % SEGN], b0 = TRACK[vs];
+  var d0x = b0[0]-a0[0], d0y = b0[1]-a0[1], m0 = Math.sqrt(d0x*d0x+d0y*d0y) || 1;
+  pts.push([b0[0] - d0x/m0*55, b0[1] - d0y/m0*55]);
+  for (var v = vs; ; v = (v+1) % SEGN) {
+    pts.push(TRACK[v]);
+    if (v === ve) break;
+  }
+  var a1 = TRACK[ve], b1 = TRACK[(ve+1) % SEGN];
+  var d1x = b1[0]-a1[0], d1y = b1[1]-a1[1], m1 = Math.sqrt(d1x*d1x+d1y*d1y) || 1;
+  pts.push([a1[0] + d1x/m1*55, a1[1] + d1y/m1*55]);
+  // 内侧方向取全弯最急顶点的
+  var sharp = vs, st = 0;
+  for (v = vs; ; v = (v+1) % SEGN) {
+    if (turnAt(v) > st) { st = turnAt(v); sharp = v; }
+    if (v === ve) break;
+  }
+  var ind = insideDir(sharp);
+  var RK = ROAD_HALF + 4;
+  // 沿路径采样：每段取内侧法线偏移；真顶点处额外插一个弯心圆弧点（弧不塌进路面）
+  var samples = [];
+  for (var p = 0; p < pts.length - 1; p++) {
+    var ax = pts[p][0], ay = pts[p][1], bx2 = pts[p+1][0], by2 = pts[p+1][1];
+    var sx = bx2-ax, sy = by2-ay, sm = Math.sqrt(sx*sx+sy*sy) || 1;
+    var nx = -sy/sm, ny = sx/sm;
+    if (nx*ind[0] + ny*ind[1] < 0) { nx = -nx; ny = -ny; }
+    var steps = Math.max(1, Math.round(sm / 15));
+    for (var q = (p === 0 ? 0 : 1); q <= steps; q++) {
+      var tt = q / steps;
+      samples.push({ x: ax + sx*tt + nx*RK, y: ay + sy*tt + ny*RK, a: Math.atan2(sy, sx) });
+    }
+    if (p + 1 <= pts.length - 2) {          // 段间真顶点：补弯心弧点
+      var vi = insideDir((vs + p) % SEGN);   // pts[1..] 依次对应顶点 vs, vs+1, ...
+      var vx2 = pts[p+1][0] + vi[0]*RK, vy2 = pts[p+1][1] + vi[1]*RK;
+      var lastS = samples[samples.length - 1];
+      // 弧点插在两段偏移点之间（角度取平均，香肠方向自然过渡）
+      samples.push({ x: vx2, y: vy2, a: Math.atan2(vy2 - lastS.y, vx2 - lastS.x) });
+    }
+  }
+  // 深色底边让路肩贴地
+  ctx.strokeStyle = 'rgba(20,24,30,0.55)'; ctx.lineWidth = 13; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(samples[0].x, samples[0].y);
+  for (var r = 1; r < samples.length; r++) ctx.lineTo(samples[r].x, samples[r].y);
+  ctx.stroke();
+  // 逐颗香肠
+  for (r = 0; r < samples.length; r++) {
+    var smp = samples[r];
+    ctx.save(); ctx.translate(smp.x, smp.y); ctx.rotate(smp.a);
+    ctx.fillStyle = (r % 2) ? '#c0392b' : '#f2f2f2';
+    ctx.beginPath();
+    ctx.moveTo(-3.5, -5);
+    ctx.arcTo(6.5, -5, 6.5, 5, 3); ctx.arcTo(6.5, 5, -6.5, 5, 3);
+    ctx.arcTo(-6.5, 5, -6.5, -5, 3); ctx.arcTo(-6.5, -5, 6.5, -5, 3);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+}
+function drawKerbs() {
+  var j = 0;
+  while (j < SEGN) {
+    if (turnAt(j) < 0.12) { j++; continue; }
+    var sg = crossAt(j) > 0 ? 1 : -1;
+    var e = j, sharp = false;
+    while (turnAt(e) > 0.12 && (crossAt(e) > 0 ? 1 : -1) === sg) {
+      if (turnAt(e) > 0.35) sharp = true;
+      e++;
+      if (e >= SEGN || e - j > 12) break;      // 不跨跨年界/防死循环
+    }
+    if (sharp) drawKerbRun(j, e - 1);
+    j = e;
+  }
+}
 function aheadPt(pos, dist) {   // 沿中线从 pos 往前走 dist 的点
   var i = pos.i, t = pos.t, left = dist;
   for (var n = 0; n < SEGN + 2; n++) {
@@ -533,7 +624,12 @@ function update(dt) {
   for (var i = 0; i < cars.length; i++) {
     var c = cars[i];
     if (c.finished) { c.speed *= (1 - dt * 0.8); }
-    if (c.team === 0) { c.slipFrom = slipCheck(c); c.slip = !!c.slipFrom; stepCar(c, dt, true); }
+    if (c.team === 0) {
+      c.slipFrom = slipCheck(c); c.slip = !!c.slipFrom;
+      if (c.slip && !c.slipPrev) beep(520, 0.18, 0.045);   // 进尾流提示音
+      c.slipPrev = c.slip;
+      stepCar(c, dt, true);
+    }
     else { c.slip = false; c.slipFrom = null; aiDrive(c, dt); stepCar(c, dt, false); }
   }
   carCollide(dt);
@@ -567,50 +663,8 @@ function drawTrack() {
   for (i = 1; i < SEGN; i++) ctx.lineTo(TRACK[i][0], TRACK[i][1]);
   ctx.closePath(); ctx.stroke();
 
-  // 弯心香肠路肩：贴着弯道内侧的沥青边缘，沿整条弯弧排开（真正的弯心位置）
-  var lastKx = -1e9, lastKy = 0;
-  for (i = 0; i < SEGN; i++) {
-    var turnK = turnAt(i);
-    if (turnK < 0.35) continue;
-    var kb = TRACK[i];
-    if (Math.abs(kb[0]-lastKx) + Math.abs(kb[1]-lastKy) < 100) continue;   // 跟上一个路肩太近就跳过（防重叠）
-    lastKx = kb[0]; lastKy = kb[1];
-    var ka = TRACK[(i+SEGN-1) % SEGN], kd = TRACK[(i+1) % SEGN];
-    var v1x = kb[0]-ka[0], v1y = kb[1]-ka[1], v2x = kd[0]-kb[0], v2y = kd[1]-kb[1];
-    var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
-    var ind = insideDir(i);
-    // 两条邻边各自指向弯内侧的法线
-    var n1x = -v1y/m1, n1y = v1x/m1;
-    if (n1x*ind[0] + n1y*ind[1] < 0) { n1x = -n1x; n1y = -n1y; }
-    var n2x = -v2y/m2, n2y = v2x/m2;
-    if (n2x*ind[0] + n2y*ind[1] < 0) { n2x = -n2x; n2y = -n2y; }
-    // 路肩弧线 = 以弯心顶点为圆心、半径=路面半宽，从入弯边法线扫到出弯边法线
-    var RK = ROAD_HALF + 4;
-    var cosT = Math.max(-1, Math.min(1, n1x*n2x + n1y*n2y));
-    var cosH = Math.sqrt((1 + cosT) / 2) || 0.6;
-    var e1x = kb[0] + n1x*RK, e1y = kb[1] + n1y*RK;
-    var e2x = kb[0] + n2x*RK, e2y = kb[1] + n2y*RK;
-    var ccx = kb[0] + ind[0]*(RK/cosH), ccy = kb[1] + ind[1]*(RK/cosH);
-    var pieces = Math.max(5, Math.round(RK * Math.acos(cosT) / 16));
-    // 先描一道深色底边让路肩"贴地"，再逐颗排香肠
-    ctx.strokeStyle = 'rgba(20,24,30,0.55)'; ctx.lineWidth = 13; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(e1x, e1y); ctx.quadraticCurveTo(ccx, ccy, e2x, e2y); ctx.stroke();
-    for (var t2 = 0; t2 <= 1.001; t2 += 1 / pieces) {
-      var qx = (1-t2)*(1-t2)*e1x + 2*(1-t2)*t2*ccx + t2*t2*e2x;
-      var qy = (1-t2)*(1-t2)*e1y + 2*(1-t2)*t2*ccy + t2*t2*e2y;
-      var txx = 2*(1-t2)*(ccx-e1x) + 2*t2*(e2x-ccx);
-      var tyy = 2*(1-t2)*(ccy-e1y) + 2*t2*(e2y-ccy);
-      var kAng = Math.atan2(tyy, txx);
-      ctx.save(); ctx.translate(qx, qy); ctx.rotate(kAng);
-      ctx.fillStyle = (Math.round(t2 * pieces) % 2) ? '#c0392b' : '#f2f2f2';
-      ctx.beginPath();
-      ctx.moveTo(-3.5, -5);
-      ctx.arcTo(6.5, -5, 6.5, 5, 3); ctx.arcTo(6.5, 5, -6.5, 5, 3);
-      ctx.arcTo(-6.5, 5, -6.5, -5, 3); ctx.arcTo(-6.5, -5, 6.5, -5, 3);
-      ctx.closePath(); ctx.fill();
-      ctx.restore();
-    }
-  }
+  // 弯心香肠路肩：沿每条弯的内侧沥青边缘整段铺（连续同向弯算一条弯）
+  drawKerbs();
   // 起点黑白格（横在主直道上，跟赛道方向走）
   ctx.save();
   ctx.translate(SEG0OX + SEG0X * START_S, SEG0OY + SEG0Y * START_S);
@@ -672,11 +726,15 @@ function drawHUD() {
   ctx.fillText('第 ' + Math.min(me.lap, TOTAL_LAPS) + ' / ' + TOTAL_LAPS + ' 圈', 18, 26);
   ctx.fillStyle = '#c8d3de'; ctx.font = 'bold 16px sans-serif';
   ctx.fillText('车速 ' + Math.round(me.speed) + ' km/h', 170, 26);
-  if (me.slip) {                                   // 尾流提示
-    ctx.fillStyle = '#6ee7ff';
-    ctx.fillText('⚡尾流 ×1.1', 330, 26);
+  if (me.slip) {                                   // 尾流提示（醒目的胶囊徽章）
+    ctx.fillStyle = 'rgba(16,58,80,0.9)';
+    btnPath(322, 7, 150, 36, 18); ctx.fill();
+    ctx.strokeStyle = '#6ee7ff'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#6ee7ff'; ctx.textAlign = 'center';
+    ctx.fillText('⚡尾流 ×1.1', 397, 26);
+    ctx.textAlign = 'left';
   }
-  ctx.fillText('名次 P' + positionOf(me), 480, 26);
+  ctx.fillText('名次 P' + positionOf(me), 500, 26);
   ctx.textAlign = 'right';
   ctx.fillText('本圈 ' + fmtT(me.lapT), W - 190, 26);
   ctx.fillStyle = '#8fd0a8';
@@ -702,7 +760,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.10.0', CX, 242);
+  ctx.fillText('v0.11.0', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
@@ -785,21 +843,28 @@ function draw() {
     ctx.translate(wo.x, wo.y);
     ctx.rotate(wo.angle);
     var grad = ctx.createLinearGradient(-30, 0, -155, 0);
-    grad.addColorStop(0, 'rgba(150,215,255,0.20)');
+    grad.addColorStop(0, 'rgba(150,215,255,0.34)');
+    grad.addColorStop(0.6, 'rgba(150,215,255,0.14)');
     grad.addColorStop(1, 'rgba(150,215,255,0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.moveTo(-26, -20); ctx.lineTo(-155, -32); ctx.lineTo(-155, 32); ctx.lineTo(-26, 20);
+    ctx.moveTo(-26, -24); ctx.lineTo(-155, -38); ctx.lineTo(-155, 38); ctx.lineTo(-26, 24);
     ctx.closePath(); ctx.fill();
-    ctx.lineWidth = 2;
-    for (var wi = 0; wi < 5; wi++) {                  // 气带里向后流动的空气线
-      var wt = (raceT * 2.4 + wi * 0.21) % 1;
+    ctx.lineWidth = 3;
+    for (var wi = 0; wi < 6; wi++) {                  // 气带里向后流动的空气线
+      var wt = (raceT * 2.6 + wi * 0.18) % 1;
       var wx = -32 - wt * 116;
-      var wy = (wi - 2) * 11.5 + Math.sin(raceT * 7 + wi * 1.7) * 3;
-      ctx.strokeStyle = 'rgba(190,235,255,' + (0.5 * Math.sin(wt * Math.PI)).toFixed(2) + ')';
-      ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(wx - 15 - wt * 10, wy); ctx.stroke();
+      var wy = (wi - 2.5) * 12 + Math.sin(raceT * 7 + wi * 1.7) * 3;
+      ctx.strokeStyle = 'rgba(190,235,255,' + (0.7 * Math.sin(wt * Math.PI)).toFixed(2) + ')';
+      ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(wx - 16 - wt * 10, wy); ctx.stroke();
     }
     ctx.restore();
+    // 玩家车身脉冲光圈：一眼知道自己正在吃尾流
+    var pr = 36 + Math.sin(raceT * 10) * 5;
+    ctx.strokeStyle = 'rgba(110,231,255,0.8)'; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.arc(cars[0].x, cars[0].y, pr, 0, 7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(110,231,255,0.3)'; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.arc(cars[0].x, cars[0].y, pr + 5, 0, 7); ctx.stroke();
   }
   for (var i = cars.length - 1; i >= 0; i--) drawCar(cars[i]);
   drawSparks();
