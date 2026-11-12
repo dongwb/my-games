@@ -25,8 +25,10 @@
           尾流 ×1.1 / 修 V 键
    v0.11.0：赛道整体放大 ×2（一圈 30 多秒）/ 路肩沿内侧沥青边缘整段铺
    v0.11.1：路肩渲染做减法——白底红杠经典路肩带（不再逐颗香肠乱飞）/
-          尾流删繁就简（只留气带+小字，去掉光圈和提示音）/
-          引擎声浪重做：双振荡器+低通滤波+模拟换挡转速
+          尾流删繁就简（只留气带+小字，去掉光圈和提示音）
+   v0.11.2：修路肩翻错边（>90° 急弯内侧判断翻车，改用转向符号法线）/
+          声浪按真实 F1 数据重做：点火基频=rpm/60×3（460~750Hz）+
+          4 倍谐波（2~3kHz 尖叫区）+ 涡轮哨声 5~6.5kHz
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -151,8 +153,11 @@ function nearestPt(px, py) {
   return { x: bx, y: by };
 }
 
-// ---------- 音效 ----------
-var AC = null, engO = null, engO2 = null, engF = null, engG = null;
+// ---------- 音效（按真实 F1 V6 涡轮混动数据调） ----------
+// 实测资料：转速上限 15000rpm；声能集中在 2~4kHz；V6 四冲程每转 3 次点火
+// → 点火基频 = rpm/60×3（约 460~750Hz）， scream 来自 4 倍谐波（≈2~3kHz），
+// 涡轮 10 万转以上叠一层 5~6.5kHz 的哨声
+var AC = null, engO = null, engO2 = null, engO3 = null, engF = null, engG = null, engG2 = null, engG3 = null;
 function ac() {
   try {
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
@@ -162,25 +167,33 @@ function ac() {
 }
 function engineStart() {
   var a = ac(); if (!a || engO) return;
-  // 双振荡器 + 低通滤波：锯齿波打底、方波垫高频，滤掉毛刺——不再是低频"放屁"声
-  engF = a.createBiquadFilter(); engF.type = 'lowpass'; engF.frequency.value = 1100; engF.Q.value = 2;
-  engG = a.createGain(); engG.gain.value = 0.02;
-  engO = a.createOscillator(); engO.type = 'sawtooth'; engO.frequency.value = 110;
-  engO2 = a.createOscillator(); engO2.type = 'square'; engO2.frequency.value = 165;
-  engO.connect(engF); engO2.connect(engF);
-  engF.connect(engG); engG.connect(a.destination);
-  engO.start(); engO2.start();
+  engF = a.createBiquadFilter(); engF.type = 'lowpass'; engF.frequency.value = 6000; engF.Q.value = 0.7;
+  engG = a.createGain(); engG.gain.value = 0.05;      // 点火基频（锯齿波，车身低频）
+  engG2 = a.createGain(); engG2.gain.value = 0.055;   // 4 倍谐波（F1 的 scream 主体）
+  engG3 = a.createGain(); engG3.gain.value = 0.006;   // 涡轮哨声（很轻一层）
+  engO = a.createOscillator(); engO.type = 'sawtooth'; engO.frequency.value = 460;
+  engO2 = a.createOscillator(); engO2.type = 'sawtooth'; engO2.frequency.value = 1840;
+  engO3 = a.createOscillator(); engO3.type = 'sine'; engO3.frequency.value = 5000;
+  engO.connect(engG); engG.connect(engF);
+  engO2.connect(engG2); engG2.connect(engF);
+  engO3.connect(engG3); engG3.connect(engF);
+  engF.connect(a.destination);
+  engO.start(); engO2.start(); engO3.start();
 }
 function engineStop() {
-  if (engO) { try { engO.stop(); engO2.stop(); } catch(e){} engO = null; engO2 = null; }
+  if (engO) { try { engO.stop(); engO2.stop(); engO3.stop(); } catch(e){} engO = null; engO2 = null; engO3 = null; }
 }
 function engineTick(sp) {
   if (!engO || !AC) return;
-  // 模拟换挡：每 55 速度一档，档内转速爬升、升档转速回落
+  // 模拟 8 档变速箱：档内转速 9000→14200 爬升，升档回落
   var gear = Math.floor(sp / 55);
-  var f = 100 + gear * 38 + (sp - gear * 55) * 1.7;
-  engO.frequency.setValueAtTime(f, AC.currentTime);
-  if (engO2) engO2.frequency.setValueAtTime(f * 1.5, AC.currentTime);
+  var frac = (sp - gear * 55) / 55;
+  var rpm = 9000 + gear * 800 + frac * 5200;
+  var f = rpm / 60 * 3;                      // 点火基频：460~750Hz
+  var t = AC.currentTime;
+  engO.frequency.setValueAtTime(f, t);
+  engO2.frequency.setValueAtTime(f * 4, t);            // 4 次谐波 → 2~3kHz 尖叫区
+  engO3.frequency.setValueAtTime(2600 + rpm * 0.26, t); // 涡轮哨声随转速升高
 }
 function beep(f, dur, vol) {
   var a = ac(); if (!a) return;
@@ -377,11 +390,12 @@ function turnAt(j) {   // 顶点 j 的弯度：0 = 笔直，2 = 原地掉头
   var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
   return 1 - (v1x*v2x + v1y*v2y) / (m1*m2);
 }
-function insideDir(j) {   // 顶点 j 弯内侧的单位方向（路肩和赛车线都用它）
+function insideDir(j) {   // 顶点 j 弯内侧的单位方向 = 两条邻边的内侧法线取平均（任意角度都对）
   var a = TRACK[(j+SEGN-1) % SEGN], b = TRACK[j], d = TRACK[(j+1) % SEGN];
   var v1x = b[0]-a[0], v1y = b[1]-a[1], v2x = d[0]-b[0], v2y = d[1]-b[1];
   var m1 = Math.sqrt(v1x*v1x+v1y*v1y) || 1, m2 = Math.sqrt(v2x*v2x+v2y*v2y) || 1;
-  var ix = v2x/m2 - v1x/m1, iy = v2y/m2 - v1y/m1;
+  var sg = (v1x*v2y - v1y*v2x) > 0 ? 1 : -1;
+  var ix = (-v1y/m1 + -v2y/m2) * sg, iy = (v1x/m1 + v2x/m2) * sg;
   var im = Math.sqrt(ix*ix + iy*iy) || 1;
   return [ix/im, iy/im];
 }
@@ -390,8 +404,9 @@ function crossAt(j) {   // 顶点 j 的转向（符号 = 左/右）
   return (b[0]-a[0])*(d[1]-b[1]) - (b[1]-a[1])*(d[0]-b[0]);
 }
 
-// ---------- 路肩：连续同向弯算"一条弯"，沿内侧沥青边缘整段铺香肠 ----------
-function drawKerbRun(vs, ve) {
+// ---------- 路肩：沿中线采样 + 法线偏移 + 钳到路面外，永远贴着沥青边缘 ----------
+function drawKerbRun(vs, ve, sg) {
+  var RK = ROAD_HALF + 4;
   // 路径点列：入口 55px 前 → vs..ve 各顶点 → 出口 55px 后
   var pts = [];
   var a0 = TRACK[(vs+SEGN-1) % SEGN], b0 = TRACK[vs];
@@ -404,39 +419,43 @@ function drawKerbRun(vs, ve) {
   var a1 = TRACK[ve], b1 = TRACK[(ve+1) % SEGN];
   var d1x = b1[0]-a1[0], d1y = b1[1]-a1[1], m1 = Math.sqrt(d1x*d1x+d1y*d1y) || 1;
   pts.push([a1[0] + d1x/m1*55, a1[1] + d1y/m1*55]);
-  // 内侧方向取全弯最急顶点的
-  var sharp = vs, st = 0;
-  for (v = vs; ; v = (v+1) % SEGN) {
-    if (turnAt(v) > st) { st = turnAt(v); sharp = v; }
-    if (v === ve) break;
-  }
-  var ind = insideDir(sharp);
-  var RK = ROAD_HALF + 4;
-  // 沿路径采样：每段取内侧法线偏移；真顶点处额外插一个弯心圆弧点（弧不塌进路面）
+  // 细采样：先按段法线偏移 RK；若落进路面（急弯斜接区），沿最近中线点方向推出路面；
+  // 推不出去的（末弯和主直道连成一片、根本没有内侧边缘）就跳过，断线不横跨路面
   var samples = [];
   for (var p = 0; p < pts.length - 1; p++) {
-    var ax = pts[p][0], ay = pts[p][1], bx2 = pts[p+1][0], by2 = pts[p+1][1];
-    var sx = bx2-ax, sy = by2-ay, sm = Math.sqrt(sx*sx+sy*sy) || 1;
-    var nx = -sy/sm, ny = sx/sm;
-    if (nx*ind[0] + ny*ind[1] < 0) { nx = -nx; ny = -ny; }
-    var steps = Math.max(1, Math.round(sm / 15));
+    var ax = pts[p][0], ay = pts[p][1];
+    var sx = pts[p+1][0]-ax, sy = pts[p+1][1]-ay, sm = Math.sqrt(sx*sx+sy*sy) || 1;
+    var nx = -sy/sm * sg, ny = sx/sm * sg;
+    var steps = Math.max(1, Math.round(sm / 12));
     for (var q = (p === 0 ? 0 : 1); q <= steps; q++) {
       var tt = q / steps;
-      samples.push({ x: ax + sx*tt + nx*RK, y: ay + sy*tt + ny*RK, a: Math.atan2(sy, sx) });
-    }
-    if (p + 1 <= pts.length - 2) {          // 段间真顶点：补弯心弧点
-      var vi = insideDir((vs + p) % SEGN);   // pts[1..] 依次对应顶点 vs, vs+1, ...
-      var vx2 = pts[p+1][0] + vi[0]*RK, vy2 = pts[p+1][1] + vi[1]*RK;
-      var lastS = samples[samples.length - 1];
-      // 弧点插在两段偏移点之间（角度取平均，香肠方向自然过渡）
-      samples.push({ x: vx2, y: vy2, a: Math.atan2(vy2 - lastS.y, vx2 - lastS.x) });
+      var px = ax + sx*tt + nx*RK, py = ay + sy*tt + ny*RK;
+      var ok = true;
+      for (var it = 0; it < 3; it++) {
+        var near = nearestPt(px, py);
+        var dx = px - near.x, dy = py - near.y, dd = Math.sqrt(dx*dx + dy*dy);
+        if (dd >= RK) break;
+        if (dd <= 0.01) { ok = false; break; }
+        px = near.x + dx/dd*RK; py = near.y + dy/dd*RK;
+        if (it === 2) ok = false;
+      }
+      if (ok) {
+        var ns = nearestOnTrack(px, py);
+        if (ns.d >= ROAD_HALF - 2) samples.push([px, py]);
+      }
     }
   }
   // 白底红杠经典路肩带：先深色描边贴地，再铺白底，最后叠红色虚线——简单干净
+  // （相邻采样点距离过远说明中间被"无边缘区"跳过 → 断线另起，绝不横跨路面）
+  if (samples.length < 2) return;
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(samples[0].x, samples[0].y);
-  for (var r = 1; r < samples.length; r++) ctx.lineTo(samples[r].x, samples[r].y);
+  ctx.moveTo(samples[0][0], samples[0][1]);
+  for (var r = 1; r < samples.length; r++) {
+    var gx = samples[r][0] - samples[r-1][0], gy = samples[r][1] - samples[r-1][1];
+    if (gx*gx + gy*gy > 1600) ctx.moveTo(samples[r][0], samples[r][1]);
+    else ctx.lineTo(samples[r][0], samples[r][1]);
+  }
   ctx.strokeStyle = 'rgba(20,24,30,0.5)'; ctx.lineWidth = 15; ctx.stroke();
   ctx.strokeStyle = '#f2f2f2'; ctx.lineWidth = 12; ctx.stroke();
   ctx.setLineDash([18, 18]);
@@ -454,7 +473,7 @@ function drawKerbs() {
       e++;
       if (e >= SEGN || e - j > 12) break;      // 不跨跨年界/防死循环
     }
-    if (sharp) drawKerbRun(j, e - 1);
+    if (sharp) drawKerbRun(j, e - 1, sg);
     j = e;
   }
 }
@@ -757,7 +776,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.11.1', CX, 242);
+  ctx.fillText('v0.11.2', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
