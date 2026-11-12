@@ -34,8 +34,9 @@
    v0.12.0：6 车同场（+白队/紫队）/ AI 加交通意识——贴近跟住不硬撞、
           横向拉出抽头超车（攻防列车而不是碰碰车）
    v0.12.1：尾流对所有车生效（AI 也会吸你的尾流抽头超你）/
-          AI 跟车只保留防撞底线（贴死对正才收油），拉出侧面就不限速——
-          允许真超车，不再开火车
+          AI 攻防规则化：提前 220px 抽头、横向没拉干净就限速、
+          并排进弯主动松油认栽、起步 6 秒排队 / 碰撞改长方形判定
+         （并排跟车不再被圆形判定误伤）
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -544,28 +545,35 @@ function aiDrive(c, dt) {
     tp[0] += ind2[0] * cutAmt; tp[1] += ind2[1] * cutAmt;
   }
 
-  // 交通意识：正前方有车——贴近就横向拉出抽头（攻防），而不是顶着撞
+  // 交通意识：咬尾跟住（控速不撞）；吸到尾流/速度占优时果断抽头，拉出去就不再收
   var ahead = carAhead(c);
-  if (ahead && ahead.d < 190 && Math.abs(ahead.side) < 26) {
-    var dir = c.passSide || (c.team % 2 ? 1 : -1);
-    if (Math.abs(ahead.side) > 12) dir = ahead.side > 0 ? -1 : 1;   // 往对方反侧拉
-    c.passSide = dir;
+  var startPhase = raceT < 6;                    // 起步 6 秒车阵没拉开：只许排队，不许抽头
+  if (ahead) {
     var ppx = -Math.sin(c.angle), ppy = Math.cos(c.angle);
-    tp[0] += ppx * dir * 62; tp[1] += ppy * dir * 62;   // 拉开 62px：车宽+余量，并排不擦碰
-  } else if (!ahead) c.passSide = 0;
-  // 间距泡：85px 内所有车都对追踪目标施加斥力——贴得近但碰不到（F1 的一车宽规则）
-  var repX = 0, repY = 0;
+    if (!startPhase && c.passSide === 0 && ahead.d < 220 && Math.abs(ahead.side) < 24 &&
+        (c.slip || c.speed > ahead.car.speed + 4)) {
+      c.passSide = ahead.side >= 0 ? -1 : 1;      // 往对方反侧提前抽头（220px 就拉，先横移再贴近）
+    }
+    if (c.passSide !== 0) {
+      tp[0] += ppx * c.passSide * 62;             // 拉开 62px：车宽+余量
+      tp[1] += ppy * c.passSide * 62;
+      // 进中急弯先收回排队——但还并排时不许收（收线就是别车），保持侧向间隔过弯
+      if (apexTurn > 0.3 && (Math.abs(ahead.side) < 18 || ahead.d > 90)) c.passSide = 0;
+      else if (ahead.d > 230) c.passSide = 0;     // 超完/放弃了，回 racing line
+    }
+  } else c.passSide = 0;
+  // 轻横向斥力：太近时目标点轻轻推开（防贴身漂移擦碰，不影响大走线）
   for (var oi = 0; oi < cars.length; oi++) {
     var o = cars[oi];
     if (o === c) continue;
     var rdx = c.x - o.x, rdy = c.y - o.y;
     var rdd = Math.sqrt(rdx*rdx + rdy*rdy);
-    if (rdd < 85 && rdd > 0.01) {
-      var push = (85 - rdd) / 85;
-      repX += rdx/rdd * push; repY += rdy/rdd * push;
+    if (rdd < 62 && rdd > 0.01) {
+      var push = (62 - rdd) / 62;
+      tp[0] += rdx/rdd * push * 30; tp[1] += rdy/rdd * push * 30;
     }
   }
-  tp[0] += repX * 70; tp[1] += repY * 70;
+
 
   var want = Math.atan2(tp[1] - c.y, tp[0] - c.x);
   var diff = want - c.angle;
@@ -602,17 +610,19 @@ function aiDrive(c, dt) {
   if (pos.d > ROAD_HALF * 0.65) want2 = Math.min(want2, 170);   // 贴边/出界先稳住
   // 车头没对准就减速：转向误差大时硬冲只会切穿内场（治 119° 紧弯切草地）
   var misalign = Math.abs(diff);
-  if (misalign > 0.5) want2 = Math.min(want2, 150 + (1.2 - Math.min(misalign, 1.2)) * 96);
+  // 车头没对准且前方真有弯才减速（直道上被人挤一下不会乱刹车）
+  if (misalign > 0.5 && apexTurn > 0.3) want2 = Math.min(want2, 150 + (1.2 - Math.min(misalign, 1.2)) * 96);
   // 尾流对所有车生效：吸到前车尾流目标速度 ×1.1（AI 也会吃 tow 抽头超车，包括吃你的）
   if (c.slip) want2 = Math.min(want2 * 1.1, 363);
-  // 跟车规则：对正咬尾时控制接近速度（不顶着撞）；并排时不抢；拉开侧面才不限速
-  if (ahead) {
-    if (Math.abs(ahead.side) < 30) {
-      if (ahead.d < 70) want2 = Math.min(want2, ahead.car.speed * (c.slip ? 1.0 : 0.965));
-      else want2 = Math.min(want2, ahead.car.speed + (ahead.d - 70) * 0.35);
-    } else if (ahead.d < 55) {
-      want2 = Math.min(want2, ahead.car.speed + 6);
-    }
+  // 跟车规则：横向没拉干净（|side|<40）就控制接近速度——先横移再贴近；
+  // 完全拉到侧面才放开限速——让它超
+  if (ahead && Math.abs(ahead.side) < 40) {
+    if (ahead.d < 70) want2 = Math.min(want2, ahead.car.speed * 0.97);
+    else want2 = Math.min(want2, ahead.car.speed + (ahead.d - 70) * 0.3);
+  }
+  // 并排进中急弯：抽头一方主动松油认栽，让对方先过——下次再来（不进弯硬挤）
+  if (ahead && c.passSide !== 0 && apexTurn > 0.3 && ahead.d < 90 && Math.abs(ahead.side) >= 18) {
+    want2 = Math.min(want2, ahead.car.speed * 0.93);
   }
   if (c.speed < want2) c.speed += 210 * D.acc * (c.slip ? 1.25 : 1) * dt;
   else c.speed -= brakePow * dt;
@@ -675,30 +685,39 @@ function carCollide(dt) {
   for (var i = 0; i < cars.length; i++) {
     for (var j = i + 1; j < cars.length; j++) {
       var a = cars[i], b = cars[j];
-      var dx = b.x - a.x, dy = b.y - a.y, d2 = dx*dx + dy*dy, minD = 46;
-      if (d2 < minD*minD && d2 > 0.01) {
-        var d = Math.sqrt(d2), nx = dx / d, ny = dy / d;
-        var push = (minD - d) / d * 0.5;
-        a.x -= dx*push; a.y -= dy*push;
-        b.x += dx*push; b.y += dy*push;
-        var va = velOf(a), vb = velOf(b);
-        var rel = (va.x - vb.x) * nx + (va.y - vb.y) * ny;
-        if (rel > 25) {
-          // 法线冲量交换（恢复系数 0.65）+ 各损失一点速度（动能损耗）
-          var j2 = rel * 0.825;
-          va.x -= nx*j2; va.y -= ny*j2;
-          vb.x += nx*j2; vb.y += ny*j2;
-          writeVel(a, va); writeVel(b, vb);
-          a.speed *= 0.94; b.speed *= 0.94;
-          // 甩头震动：撞上那一下车身会被震歪一点
-          a.angle += (Math.random() - 0.5) * 0.12;
-          b.angle += (Math.random() - 0.5) * 0.12;
-          spawnSparks(a.x + nx * d / 2, a.y + ny * d / 2, rel);
-          thud();
-        } else {
-          // 贴在一起蹭：持续减速刮擦
-          a.speed *= (1 - dt * 0.8); b.speed *= (1 - dt * 0.8);
-        }
+      var dx = b.x - a.x, dy = b.y - a.y, d2 = dx*dx + dy*dy;
+      if (d2 > 70*70 || d2 < 0.01) continue;
+      // 长方形判定（车长 65 车宽 37，在各自车身系里算重叠）——并排跟车不再被圆形判定误伤
+      var ca = Math.cos(a.angle), sa = Math.sin(a.angle);
+      var fxA = dx*ca + dy*sa, sxA = -dx*sa + dy*ca;
+      var cb = Math.cos(b.angle), sb = Math.sin(b.angle);
+      var fxB = -dx*cb - dy*sb, sxB = dx*sb - dy*cb;
+      var hit = (Math.abs(fxA) < 56 && Math.abs(sxA) < 34) || (Math.abs(fxB) < 56 && Math.abs(sxB) < 34);
+      if (!hit) continue;
+      var d = Math.sqrt(d2), nx = dx / d, ny = dy / d;
+      var pen = Math.max(0, 58 - d);              // 分离量：把重叠的车推开
+      if (pen > 0) {
+        var sp = pen / d * 0.5;
+        a.x -= dx*sp; a.y -= dy*sp;
+        b.x += dx*sp; b.y += dy*sp;
+      }
+      var va = velOf(a), vb = velOf(b);
+      var rel = (va.x - vb.x) * nx + (va.y - vb.y) * ny;
+      if (rel > 25) {
+        // 法线冲量交换（恢复系数 0.65）+ 各损失一点速度（动能损耗）
+        var j2 = rel * 0.825;
+        va.x -= nx*j2; va.y -= ny*j2;
+        vb.x += nx*j2; vb.y += ny*j2;
+        writeVel(a, va); writeVel(b, vb);
+        a.speed *= 0.94; b.speed *= 0.94;
+        // 甩头震动：撞上那一下车身会被震歪一点
+        a.angle += (Math.random() - 0.5) * 0.12;
+        b.angle += (Math.random() - 0.5) * 0.12;
+        spawnSparks(a.x + nx * d / 2, a.y + ny * d / 2, rel);
+        thud();
+      } else {
+        // 贴在一起蹭：持续减速刮擦
+        a.speed *= (1 - dt * 0.8); b.speed *= (1 - dt * 0.8);
       }
     }
   }
