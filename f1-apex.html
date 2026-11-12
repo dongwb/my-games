@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.12.1
+   极速弯心 APEX RACER · v0.12.2
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车 + 6 车攻防
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
@@ -33,10 +33,10 @@
           难度上调（困难直道 ~320、刹车更晚）
    v0.12.0：6 车同场（+白队/紫队）/ AI 加交通意识——贴近跟住不硬撞、
           横向拉出抽头超车（攻防列车而不是碰碰车）
-   v0.12.1：尾流对所有车生效（AI 也会吸你的尾流抽头超你）/
-          AI 攻防规则化：提前 220px 抽头、横向没拉干净就限速、
-          并排进弯主动松油认栽、起步 6 秒排队 / 碰撞改长方形判定
-         （并排跟车不再被圆形判定误伤）
+   v0.12.2：尾流对所有车生效（AI 也会吸你的尾流抽头超你）/
+          AI 攻防规则化：提前 220px 抽头、抽头探出半身就解除限速
+         （修抽头流产）、并排进弯主动松油认栽、起步 6 秒排队 /
+          碰撞改长方形判定（并排跟车不再被圆形判定误伤）
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -558,7 +558,7 @@ function aiDrive(c, dt) {
       tp[0] += ppx * c.passSide * 62;             // 拉开 62px：车宽+余量
       tp[1] += ppy * c.passSide * 62;
       // 进中急弯先收回排队——但还并排时不许收（收线就是别车），保持侧向间隔过弯
-      if (apexTurn > 0.3 && (Math.abs(ahead.side) < 18 || ahead.d > 90)) c.passSide = 0;
+      if (apexTurn > 0.45 && (Math.abs(ahead.side) < 18 || ahead.d > 90)) c.passSide = 0;
       else if (ahead.d > 230) c.passSide = 0;     // 超完/放弃了，回 racing line
     }
   } else c.passSide = 0;
@@ -617,11 +617,13 @@ function aiDrive(c, dt) {
   // 跟车规则：横向没拉干净（|side|<40）就控制接近速度——先横移再贴近；
   // 完全拉到侧面才放开限速——让它超
   if (ahead && Math.abs(ahead.side) < 40) {
-    if (ahead.d < 70) want2 = Math.min(want2, ahead.car.speed * 0.97);
+    if (c.passSide !== 0 && Math.abs(ahead.side) > 12) {
+      want2 = Math.min(want2, ahead.car.speed + 26);   // 抽头探出半个车身：允许快一截完成超越
+    } else if (ahead.d < 70) want2 = Math.min(want2, ahead.car.speed * 0.97);
     else want2 = Math.min(want2, ahead.car.speed + (ahead.d - 70) * 0.3);
   }
   // 并排进中急弯：抽头一方主动松油认栽，让对方先过——下次再来（不进弯硬挤）
-  if (ahead && c.passSide !== 0 && apexTurn > 0.3 && ahead.d < 90 && Math.abs(ahead.side) >= 18) {
+  if (ahead && c.passSide !== 0 && apexTurn > 0.2 && ahead.d < 90 && Math.abs(ahead.side) >= 18) {
     want2 = Math.min(want2, ahead.car.speed * 0.93);
   }
   if (c.speed < want2) c.speed += 210 * D.acc * (c.slip ? 1.25 : 1) * dt;
@@ -871,7 +873,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.12.1', CX, 242);
+  ctx.fillText('v0.12.2', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
