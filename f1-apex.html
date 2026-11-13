@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.13.1
+   极速弯心 APEX RACER · v0.13.2
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车 + 6 车攻防
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
@@ -42,8 +42,10 @@
           困难强 10~15%（加速 192/尾速 350~358），弯道快保留
    v0.13.0：8 车 8 支真实 F1 涂装 / 抽头选弯内线+平滑过渡 /
           超越期超速+40 / 弯速 180→210
-   v0.13.1：梅奔索伯配色对调 / v0.14.0 真实抓地实验回退
-         （7g 物理下 AI 车阵玩不转，真实物理需重写 AI 驾驶模型）
+   v0.13.1：梅奔索伯配色对调（其余同 v0.13.0）
+   v0.13.2：修 AI 弯中太慢的真凶——贴边防爆和没对准刹车把赛车线
+          上的车误压到 170：改成真到路沿才收油、真歪头才减速，
+          弯中均速 230→286~316，圈速 29~34s→24.7~25.5s（出界≤1.1%）
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -620,17 +622,17 @@ function aiDrive(c, dt) {
       var lenOut = Math.sqrt((b2[0]-TRACK[i][0])*(b2[0]-TRACK[i][0]) + (b2[1]-TRACK[i][1])*(b2[1]-TRACK[i][1]));
       var theta = Math.acos(Math.max(-1, Math.min(1, 1 - turn)));
       var rCor = ((segLen + lenOut) / 2) / Math.max(0.2, theta) + ROAD_HALF * 0.7;
-      var vAllow = Math.sqrt(210 * rCor);   // 弯道横向加速度上限再调高：弯中更快
+      var vAllow = Math.sqrt(240 * rCor);
       var vHere = Math.sqrt(vAllow * vAllow + 2 * brakePow * acc);   // 刹车曲线
       if (vHere < want2) want2 = vHere;
     }
   }
   want2 *= (1 + D.skill * 0.5);
-  if (pos.d > ROAD_HALF * 0.65) want2 = Math.min(want2, 170);   // 贴边/出界先稳住
+  if (pos.d > ROAD_HALF - 8) want2 = Math.min(want2, 150);   // 真到路沿才收油（赛车线不再被误伤）
   // 车头没对准就减速：转向误差大时硬冲只会切穿内场（治 119° 紧弯切草地）
   var misalign = Math.abs(diff);
   // 车头没对准且前方真有弯才减速（直道上被人挤一下不会乱刹车）
-  if (misalign > 0.5 && apexTurn > 0.3) want2 = Math.min(want2, 150 + (1.2 - Math.min(misalign, 1.2)) * 96);
+  if (misalign > 0.75 && apexTurn > 0.4) want2 = Math.min(want2, 190 + (1.2 - Math.min(misalign, 1.2)) * 60);
   // 尾流对所有车生效：吸到前车尾流目标速度 ×1.1（AI 也会吃 tow 抽头超车，包括吃你的）
   if (c.slip) want2 = Math.min(want2 * 1.1, 363);
   // 跟车规则：横向没拉干净（|side|<40）就控制接近速度——先横移再贴近；
@@ -892,7 +894,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.13.1', CX, 242);
+  ctx.fillText('v0.13.2', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
