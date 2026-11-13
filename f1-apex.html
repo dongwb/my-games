@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.15.0
+   极速弯心 APEX RACER · v0.15.1
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车 + 6 车攻防
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
@@ -50,6 +50,8 @@
           AI 节奏再平衡 / 风阻流线改小改淡
    v0.15.0：排位赛！正赛前先跑排位——幽灵模式每人 2 个飞驰圈，
           取最快单圈定发车顺位（杆位在最前），正赛发车样式不变
+   v0.15.1：排位改单人制——只有你上道，15 秒倒计时后跑 2 个飞驰圈；
+          AI 成绩按你的最快圈 ±1 秒编 / 梅奔=青、索伯=荧光绿对正
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -272,11 +274,11 @@ var TEAMS = [   // 按真实 F1 车队涂装
   { name:'你·法拉利', body:'#DC0000', wing:'#1a1a1a' },      // 法拉利：红+黑翼
   { name:'红牛',      body:'#232B4E', wing:'#FFD34D' },      // 红牛：深藏青+黄翼
   { name:'迈凯伦',    body:'#FF8000', wing:'#16324F' },      // 迈凯伦：木瓜橙+蓝黑翼
-  { name:'梅奔',      body:'#181818', wing:'#52E252' },      // 梅赛德斯（配色按制作人要求与索伯对调）
+  { name:'梅奔',      body:'#1f1f1f', wing:'#00A19B' },      // 梅赛德斯：深色+马石油青
   { name:'马丁',      body:'#00594F', wing:'#C8F542' },      // 阿斯顿马丁：英伦绿+荧光翼
   { name:'威廉姆斯',  body:'#E8ECF2', wing:'#005AFF' },      // 威廉姆斯：白+蓝翼
   { name:'Alpine',   body:'#2293D1', wing:'#FF6EB4' },      // Alpine：蓝+粉翼
-  { name:'索伯',      body:'#1f1f1f', wing:'#00A19B' }       // 索伯（配色按制作人要求与梅奔对调）
+  { name:'索伯',      body:'#181818', wing:'#52E252' }       // 索伯：黑+荧光绿
 ];
 var cars = [];
 function mkCar(i, gx, gy) {
@@ -309,21 +311,25 @@ function startRace() {
 var qualEndT = 0, qualOrder = null;
 function player() { for (var i = 0; i < cars.length; i++) if (cars[i].team === 0) return cars[i]; return cars[0]; }
 function startQual() {
+  // 排位只有你一个人上道：先 15 秒倒计时，然后 2 个飞驰圈
   cars = [];
   var nx = -SEG0Y, ny = SEG0X;
-  for (var i = 0; i < 8; i++) {
-    var s = START_S - 150 - i * 90;
-    var l = (i % 2 ? 20 : -20);
-    var c = mkCar(i, SEG0OX + SEG0X*s + nx*l, SEG0OY + SEG0Y*s + ny*l);
-    c.angle = Math.atan2(SEG0Y, SEG0X);
-    c.relT = i * 2.5;                            // 每 2.5 秒放一辆（你在第一个）
-    cars.push(c);
-  }
-  raceT = 0; qualEndT = 0; startLights = 0; sparks = [];
+  var c = mkCar(0, SEG0OX + SEG0X * (START_S - 150), SEG0OY + SEG0Y * (START_S - 150));
+  c.angle = Math.atan2(SEG0Y, SEG0X);
+  cars.push(c);
+  raceT = 0; qualEndT = 0; qualCD = 15; startLights = 0; sparks = [];
   state = 'qual';
   engineStart();
 }
 function finishQual() {
+  // AI 不用真跑：按你的最快圈 ±1 秒内各编一个成绩
+  var me = player();
+  var base = me.qBest || 30;
+  for (var i = 1; i < 8; i++) {
+    var c = mkCar(i, 0, 0);
+    c.qBest = base + (Math.random() * 2 - 1);      // ±1 秒，不夸张也不放水
+    cars.push(c);
+  }
   qualOrder = cars.slice().sort(function (a, b) { return (a.qBest || 999) - (b.qBest || 999); });
   state = 'qualres';
 }
@@ -885,17 +891,17 @@ function update(dt) {
   if (player() && player().finished) { state = 'over'; engineStop(); beep(660, 0.2, 0.07); }
 }
 
+var qualCD = 0;
 function updateQual(dt) {
   raceT += dt;
+  if (qualCD > 0) { qualCD -= dt; return; }                    // 15 秒倒计时，冻结
   for (var i = 0; i < cars.length; i++) {
     var c = cars[i];
-    if (raceT < c.relT) continue;                              // 还没轮到出场
     if (c.qLaps >= 2) { c.speed *= (1 - dt * 1.5); continue; } // 跑完收工
-    c.slipFrom = null; c.slipStr = 0; c.slip = false;          // 排位没有尾流
+    c.slipFrom = null; c.slipStr = 0; c.slip = false;
     if (c.team === 0) stepCar(c, dt, true);
     else { aiDrive(c, dt); stepCar(c, dt, false); }
   }
-  // 幽灵模式：不碰撞
   stepSparks(dt); stepWinds(dt);
   camFollow(player(), dt);
   engineTick(player() ? player().speed : 0);
@@ -1015,6 +1021,17 @@ function drawHUD() {
   ctx.fillText(me.bestLap ? '最快 ' + fmtT(me.bestLap) : '最快 --:--', W - 18, 26);
   ctx.textAlign = 'left';
 }
+function drawQualCD() {
+  if (state !== 'qual' || qualCD <= 0) return;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(10,14,20,0.45)';
+  ctx.fillRect(0, 260, W, 190);
+  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 90px sans-serif';
+  ctx.fillText(Math.ceil(qualCD), CX, 380);
+  ctx.fillStyle = '#c8d3de'; ctx.font = 'bold 20px sans-serif';
+  ctx.fillText('排位赛即将开始 · 2 个飞驰圈 · 取最快单圈定发车顺位', CX, 425);
+  ctx.textAlign = 'left';
+}
 function drawLights() {
   if (startLights <= 0) return;
   var n = Math.ceil(startLights / 0.44);
@@ -1034,7 +1051,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.15.0', CX, 242);
+  ctx.fillText('v0.15.1', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
@@ -1158,6 +1175,7 @@ function draw() {
   ctx.restore();
   if (state === 'race' || state === 'qual') drawHUD();
   if (state === 'race') drawLights();
+  drawQualCD();
   if (state === 'over') drawOver();
   if (state === 'qualres') drawQualRes();
 }
