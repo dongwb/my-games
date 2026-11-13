@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.13.3
+   极速弯心 APEX RACER · v0.14.0
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车 + 6 车攻防
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
@@ -46,6 +46,9 @@
    v0.13.2：修 AI 弯中太慢的真凶（保镖误伤赛车线），弯中 230→300+
    v0.13.3：尾流区横向加宽（±34→±55，抽头拉出去不脱 tow）/
           高速风阻流线（>240 才出现的很淡速度线）
+   v0.14.0：+2 赛道（🔱三角镖/🪃回旋镖，大厅 5 图）/ 尾流改渐变
+         （越近越强才真实）/ AI 速度回调（弯速模型 240→150，
+          你失误就挨罚、不失误能靠 tow 超）/ 风阻流线改小改淡
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -74,6 +77,24 @@ var TRACKS = [
     [720,340],[580,280],[450,320],                         // 左上组合弯
     [330,430],[280,600],[300,780],                         // 左侧长左弯
     [240,920],[230,1040]                                   // 收尾回主直道
+  ] },
+  { name:'三角镖', en:'TRIDENT', startS:400, pts:[
+    [350,1100],[1450,1100],                                // 底边主直道
+    [1650,1010],[1700,860],                                // T1 硬右
+    [1560,720],[1350,650],                                 // 连续右（中速）
+    [1150,480],[1000,300],[920,140],                       // 右侧斜边北上
+    [830,80],[680,100],[600,240],                          // 顶部尖角
+    [640,470],[590,650],[480,800],                         // 左侧斜边之字
+    [330,880],[240,1010]                                   // 左下硬收尾
+  ] },
+  { name:'回旋镖', en:'BOOMERANG', startS:400, pts:[
+    [300,300],[1400,300],                                  // 主直道（顶部）
+    [1600,360],[1720,490],[1700,650],                      // 远端 200° 大弧下扫
+    [1600,810],[1440,920],[1270,970],                      // 弧底
+    [1090,950],[940,870],[830,760],                        // 斜边内收（渐急）
+    [750,610],[690,500],[600,470],                         // V 底圆钩
+    [560,570],[580,720],[660,880],                         // 钩回下探
+    [610,1080],[500,1290],[380,1370],[290,1240],[270,1090] // 低空回旋收尾
   ] },
   { name:'战斧', en:'TOMAHAWK', startS:400, pts:[
     [300,1120],[1200,1120],                                // 主直道（短）
@@ -239,9 +260,9 @@ function thud() {   // 金属撞击
 
 // ---------- AI 难度 ----------
 var DIFFAI = [
-  { label:'🐣 简单', skill: -0.08, acc: 0.85, straight: -6 },
-  { label:'😊 中等', skill: 0,     acc: 1.05, straight: 10 },
-  { label:'😈 困难', skill: 0.16,  acc: 1.2,  straight: 18 }
+  { label:'🐣 简单', skill: -0.08, acc: 0.85, straight: -22 },
+  { label:'😊 中等', skill: 0,     acc: 1.05, straight: -15 },
+  { label:'😈 困难', skill: 0.16,  acc: 1.2,  straight: -5 }
 ];
 var diffIdx = 1;
 
@@ -335,11 +356,11 @@ function stepCar(c, dt, isPlayer) {
   var onRoad = ns.d < ROAD_HALF + 8;
 
   if (isPlayer) {
-    if (kU()) c.speed += (onRoad ? (c.slip ? 170 : 150) : 45) * dt;   // 草地上油门没劲（速度才降得下来）
+    if (kU()) c.speed += (onRoad ? 150 * (1 + 0.13 * (c.slipStr || 0)) : 45) * dt;   // 草地上油门没劲（速度才降得下来）
     if (kD()) c.speed -= 430 * dt;                   // F1 刹车很猛
   }
   c.speed -= c.speed * 0.22 * dt;
-  var cap = c.slip ? 363 : 330;                      // 尾流里极速 ×1.1
+  var cap = 330 + 33 * (c.slipStr || 0);             // 尾流极速按强度渐变（最高 ×1.1）
   if (c.speed > cap) c.speed -= (c.speed - cap) * 2.5 * dt + 30 * dt;
   if (c.speed < 0) c.speed = 0;
 
@@ -480,7 +501,7 @@ function drawKerbRun(vs, ve, sg) {
       }
       if (ok) {
         var ns = nearestOnTrack(px, py);
-        if (ns.d >= ROAD_HALF - 2) samples.push([px, py]);
+        if (ns.d >= ROAD_HALF - 6) samples.push([px, py]);
       }
     }
   }
@@ -622,7 +643,7 @@ function aiDrive(c, dt) {
       var lenOut = Math.sqrt((b2[0]-TRACK[i][0])*(b2[0]-TRACK[i][0]) + (b2[1]-TRACK[i][1])*(b2[1]-TRACK[i][1]));
       var theta = Math.acos(Math.max(-1, Math.min(1, 1 - turn)));
       var rCor = ((segLen + lenOut) / 2) / Math.max(0.2, theta) + ROAD_HALF * 0.7;
-      var vAllow = Math.sqrt(240 * rCor);
+      var vAllow = Math.sqrt(150 * rCor);
       var vHere = Math.sqrt(vAllow * vAllow + 2 * brakePow * acc);   // 刹车曲线
       if (vHere < want2) want2 = vHere;
     }
@@ -632,9 +653,9 @@ function aiDrive(c, dt) {
   // 车头没对准就减速：转向误差大时硬冲只会切穿内场（治 119° 紧弯切草地）
   var misalign = Math.abs(diff);
   // 车头没对准且前方真有弯才减速（直道上被人挤一下不会乱刹车）
-  if (misalign > 0.75 && apexTurn > 0.4) want2 = Math.min(want2, 190 + (1.2 - Math.min(misalign, 1.2)) * 60);
+  if (misalign > 0.65 && apexTurn > 0.4) want2 = Math.min(want2, 150 + (1.2 - Math.min(misalign, 1.2)) * 70);   // 弯中速度压回你能追的区间
   // 尾流对所有车生效：吸到前车尾流目标速度 ×1.1（AI 也会吃 tow 抽头超车，包括吃你的）
-  if (c.slip) want2 = Math.min(want2 * 1.1, 363);
+  if (c.slipStr > 0 && want2 >= straightV) want2 = Math.min(want2 * (1 + 0.1 * c.slipStr), 363);
   // 跟车规则：横向没拉干净（|side|<40）就控制接近速度——先横移再贴近；
   // 完全拉到侧面才放开限速——让它超
   if (ahead && Math.abs(ahead.side) < 40) {
@@ -647,22 +668,26 @@ function aiDrive(c, dt) {
   if (ahead && c.passSide !== 0 && apexTurn > 0.2 && ahead.d < 90 && Math.abs(ahead.side) >= 18) {
     want2 = Math.min(want2, ahead.car.speed * 0.97);
   }
-  if (c.speed < want2) c.speed += 160 * D.acc * (c.slip ? 1.25 : 1) * dt;
+  if (c.speed < want2) c.speed += 160 * D.acc * (1 + 0.25 * (c.slipStr || 0)) * dt;
   else c.speed -= brakePow * dt;
 }
 
 // ---------- 尾流：贴在前车正后方的尾流区（长2车位×宽1车位）里，极速 ×1.1 ----------
-function slipCheck(me) {
+function slipCheck(me) {   // 返回 {car, str}：尾流按距离/对正程度渐变，贴死最强、边缘衰减
+  var best = null, bestStr = 0;
   for (var i = 0; i < cars.length; i++) {
     var o = cars[i];
     if (o === me) continue;
     var fx = Math.cos(o.angle), fy = Math.sin(o.angle);
     var dx = me.x - o.x, dy = me.y - o.y;
-    var back = -(dx * fx + dy * fy);          // 正数 = 在 o 的正后方
+    var back = -(dx * fx + dy * fy);
     var side = dx * (-fy) + dy * fx;
-    if (back > 8 && back < 160 && Math.abs(side) < 55 && o.speed > 110) return o;   // 尾流区加宽：抽头不脱 tow
+    if (back > 8 && back < 160 && Math.abs(side) < 55 && o.speed > 110) {
+      var str = (1 - back / 170) * (1 - Math.abs(side) / 60);
+      if (str > bestStr) { bestStr = str; best = o; }
+    }
   }
-  return null;
+  return { car: best, str: bestStr };
 }
 
 // ---------- 火花粒子 ----------
@@ -700,8 +725,8 @@ function stepWinds(dt) {
   var me = cars[0];
   if (me && me.speed > 240 && Math.random() < (me.speed - 230) * 0.02) {
     var fx = Math.cos(me.angle), fy = Math.sin(me.angle);
-    var aheadD = 120 + Math.random() * 380;
-    var sideD = (Math.random() - 0.5) * 560;
+    var aheadD = 80 + Math.random() * 220;
+    var sideD = (Math.random() - 0.5) * 380;
     winds.push({
       x: me.x + fx * aheadD - fy * sideD,
       y: me.y + fy * aheadD + fx * sideD,
@@ -715,11 +740,11 @@ function stepWinds(dt) {
   }
 }
 function drawWinds() {
-  ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1.2;
   for (var i = 0; i < winds.length; i++) {
     var w = winds[i];
     ctx.beginPath(); ctx.moveTo(w.x, w.y);
-    ctx.lineTo(w.x - w.vx * 0.06, w.y - w.vy * 0.06); ctx.stroke();
+    ctx.lineTo(w.x - w.vx * 0.03, w.y - w.vy * 0.03); ctx.stroke();
   }
 }
 
@@ -796,8 +821,10 @@ function update(dt) {
   for (var i = 0; i < cars.length; i++) {
     var c = cars[i];
     if (c.finished) { c.speed *= (1 - dt * 0.8); }
-    if (c.team === 0) { c.slipFrom = slipCheck(c); c.slip = !!c.slipFrom; stepCar(c, dt, true); }
-    else { c.slipFrom = slipCheck(c); c.slip = !!c.slipFrom; aiDrive(c, dt); stepCar(c, dt, false); }   // AI 也能吃尾流
+    var sf = slipCheck(c);
+    c.slipFrom = sf.car; c.slipStr = sf.str; c.slip = sf.str > 0.3;
+    if (c.team === 0) stepCar(c, dt, true);
+    else { aiDrive(c, dt); stepCar(c, dt, false); }   // AI 也能吃尾流
   }
   carCollide(dt);
   stepSparks(dt);
@@ -924,14 +951,14 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.13.3', CX, 242);
+  ctx.fillText('v0.14.0', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
-  var icons = ['🐍', '🌀', '🪓'];
-  var bw2 = 180, bh2 = 54;
+  var icons = ['🐍', '🌀', '🔱', '🪃', '🪓'];
+  var bw2 = 150, bh2 = 54;
   for (var ti = 0; ti < TRACKS.length; ti++) {
-    var tx = CX - 280 + ti * 190, ty = 318;
+    var tx = CX - 405 + ti * 165, ty = 318;
     ctx.fillStyle = ti === trackIdx ? 'rgba(110,231,255,0.15)' : 'rgba(255,255,255,0.07)';
     btnPath(tx, ty, bw2, bh2, 10); ctx.fill();
     if (ti === trackIdx) { ctx.strokeStyle = '#6ee7ff'; ctx.lineWidth = 2; ctx.stroke(); }
