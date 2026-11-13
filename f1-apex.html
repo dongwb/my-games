@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.13.2
+   极速弯心 APEX RACER · v0.13.3
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车 + 6 车攻防
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
@@ -43,9 +43,9 @@
    v0.13.0：8 车 8 支真实 F1 涂装 / 抽头选弯内线+平滑过渡 /
           超越期超速+40 / 弯速 180→210
    v0.13.1：梅奔索伯配色对调（其余同 v0.13.0）
-   v0.13.2：修 AI 弯中太慢的真凶——贴边防爆和没对准刹车把赛车线
-          上的车误压到 170：改成真到路沿才收油、真歪头才减速，
-          弯中均速 230→286~316，圈速 29~34s→24.7~25.5s（出界≤1.1%）
+   v0.13.2：修 AI 弯中太慢的真凶（保镖误伤赛车线），弯中 230→300+
+   v0.13.3：尾流区横向加宽（±34→±55，抽头拉出去不脱 tow）/
+          高速风阻流线（>240 才出现的很淡速度线）
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -660,7 +660,7 @@ function slipCheck(me) {
     var dx = me.x - o.x, dy = me.y - o.y;
     var back = -(dx * fx + dy * fy);          // 正数 = 在 o 的正后方
     var side = dx * (-fy) + dy * fx;
-    if (back > 10 && back < 150 && Math.abs(side) < 34 && o.speed > 110) return o;
+    if (back > 8 && back < 160 && Math.abs(side) < 55 && o.speed > 110) return o;   // 尾流区加宽：抽头不脱 tow
   }
   return null;
 }
@@ -691,6 +691,35 @@ function drawSparks() {
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(s.x, s.y);
     ctx.lineTo(s.x - s.vx * 0.03, s.y - s.vy * 0.03); ctx.stroke();
+  }
+}
+
+// ---------- 高速风阻流线（很淡，只在你高速时出现） ----------
+var winds = [];
+function stepWinds(dt) {
+  var me = cars[0];
+  if (me && me.speed > 240 && Math.random() < (me.speed - 230) * 0.02) {
+    var fx = Math.cos(me.angle), fy = Math.sin(me.angle);
+    var aheadD = 120 + Math.random() * 380;
+    var sideD = (Math.random() - 0.5) * 560;
+    winds.push({
+      x: me.x + fx * aheadD - fy * sideD,
+      y: me.y + fy * aheadD + fx * sideD,
+      vx: -fx * me.speed * 1.35, vy: -fy * me.speed * 1.35, t: 0.5
+    });
+  }
+  for (var i = winds.length - 1; i >= 0; i--) {
+    var w = winds[i];
+    w.t -= dt; w.x += w.vx * dt; w.y += w.vy * dt;
+    if (w.t <= 0) winds.splice(i, 1);
+  }
+}
+function drawWinds() {
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 2;
+  for (var i = 0; i < winds.length; i++) {
+    var w = winds[i];
+    ctx.beginPath(); ctx.moveTo(w.x, w.y);
+    ctx.lineTo(w.x - w.vx * 0.06, w.y - w.vy * 0.06); ctx.stroke();
   }
 }
 
@@ -772,6 +801,7 @@ function update(dt) {
   }
   carCollide(dt);
   stepSparks(dt);
+  stepWinds(dt);
   camFollow(cars[0], dt);
   engineTick(cars[0] ? cars[0].speed : 0);
 
@@ -894,7 +924,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.13.2', CX, 242);
+  ctx.fillText('v0.13.3', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
@@ -971,6 +1001,7 @@ function draw() {
     ctx.translate(-cam.x, -cam.y);        // 近追：镜头跟随
   }
   drawTrack();
+  drawWinds();
   if (cars[0] && cars[0].slipFrom) {                  // 尾流带：前车尾部拖着一条向后流动的低压气带
     var wo = cars[0].slipFrom;
     ctx.save();
@@ -982,13 +1013,13 @@ function draw() {
     grad.addColorStop(1, 'rgba(150,215,255,0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.moveTo(-26, -24); ctx.lineTo(-155, -38); ctx.lineTo(-155, 38); ctx.lineTo(-26, 24);
+    ctx.moveTo(-26, -28); ctx.lineTo(-160, -58); ctx.lineTo(-160, 58); ctx.lineTo(-26, 28);
     ctx.closePath(); ctx.fill();
     ctx.lineWidth = 3;
     for (var wi = 0; wi < 6; wi++) {                  // 气带里向后流动的空气线
       var wt = (raceT * 2.6 + wi * 0.18) % 1;
       var wx = -32 - wt * 116;
-      var wy = (wi - 2.5) * 12 + Math.sin(raceT * 7 + wi * 1.7) * 3;
+      var wy = (wi - 2.5) * 18 + Math.sin(raceT * 7 + wi * 1.7) * 4;
       ctx.strokeStyle = 'rgba(190,235,255,' + (0.7 * Math.sin(wt * Math.PI)).toFixed(2) + ')';
       ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(wx - 16 - wt * 10, wy); ctx.stroke();
     }
