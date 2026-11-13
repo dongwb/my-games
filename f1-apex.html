@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.12.3
+   极速弯心 APEX RACER · v0.12.4
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车 + 6 车攻防
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
@@ -36,7 +36,8 @@
    v0.12.2：尾流对所有车生效 / AI 攻防规则化 / 碰撞改长方形判定
    v0.12.3：AI 马力压玩家一头——直道尾速 322~358（玩家 330）+
           弯道横向加速度上限 130→180（过弯不再怂）+ 刹车更晚
-   ============================================================ */
+   v0.12.4：回调过量——AI 起步加速度 283→129~167（≈玩家 150），
+          尾速差收窄（中等 334~342 / 困难 342~350），能玩不等于让着你
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -230,9 +231,9 @@ function thud() {   // 金属撞击
 
 // ---------- AI 难度 ----------
 var DIFFAI = [
-  { label:'🐣 简单', skill: -0.08, acc: 0.9,  straight: -8 },
-  { label:'😊 中等', skill: 0,     acc: 1.05, straight: 10 },
-  { label:'😈 困难', skill: 0.16,  acc: 1.35, straight: 20 }
+  { label:'🐣 简单', skill: -0.08, acc: 0.85, straight: -14 },
+  { label:'😊 中等', skill: 0,     acc: 0.95, straight: 4 },
+  { label:'😈 困难', skill: 0.16,  acc: 1.1,  straight: 12 }
 ];
 var diffIdx = 1;
 
@@ -626,7 +627,7 @@ function aiDrive(c, dt) {
   if (ahead && c.passSide !== 0 && apexTurn > 0.2 && ahead.d < 90 && Math.abs(ahead.side) >= 18) {
     want2 = Math.min(want2, ahead.car.speed * 0.93);
   }
-  if (c.speed < want2) c.speed += 210 * D.acc * (c.slip ? 1.25 : 1) * dt;
+  if (c.speed < want2) c.speed += 152 * D.acc * (c.slip ? 1.25 : 1) * dt;
   else c.speed -= brakePow * dt;
 }
 
@@ -873,7 +874,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.12.3', CX, 242);
+  ctx.fillText('v0.12.4', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
