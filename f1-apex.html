@@ -620,7 +620,7 @@ function aiDrive(c, dt) {
       var lenOut = Math.sqrt((b2[0]-TRACK[i][0])*(b2[0]-TRACK[i][0]) + (b2[1]-TRACK[i][1])*(b2[1]-TRACK[i][1]));
       var theta = Math.acos(Math.max(-1, Math.min(1, 1 - turn)));
       var rCor = ((segLen + lenOut) / 2) / Math.max(0.2, theta) + ROAD_HALF * 0.7;
-      var vAllow = Math.sqrt(240 * rCor);   // 弯中再提速
+      var vAllow = Math.sqrt(210 * rCor);   // 弯道横向加速度上限再调高：弯中更快
       var vHere = Math.sqrt(vAllow * vAllow + 2 * brakePow * acc);   // 刹车曲线
       if (vHere < want2) want2 = vHere;
     }
