@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.12.5
+   极速弯心 APEX RACER · v0.13.0
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车 + 6 车攻防
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
@@ -40,6 +40,9 @@
           尾速差收窄（中等 334~342 / 困难 342~350），能玩不等于让着你
    v0.12.5：再平衡——中等比玩家能打 5%（加速 168/尾速 342~350）、
           困难强 10~15%（加速 192/尾速 350~358），弯道快保留
+   v0.13.0：8 车 8 支真实 F1 涂装（法拉利/红牛/迈凯伦/梅奔/马丁/
+          威廉姆斯/Alpine/索伯）/ 抽头方向选下一个弯内线+平滑过渡
+         （治直道急刹）/ 超越期超速+40 / 弯道横向加速度 180→210
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -240,13 +243,15 @@ var DIFFAI = [
 var diffIdx = 1;
 
 // ---------- 赛车 ----------
-var TEAMS = [
-  { name:'你',   body:'#D92B2B', wing:'#1a1a1a' },
-  { name:'蓝队', body:'#2456C8', wing:'#101828' },
-  { name:'橙队', body:'#E88020', wing:'#202020' },
-  { name:'绿队', body:'#1F9E58', wing:'#181818' },
-  { name:'白队', body:'#E8E8E8', wing:'#20262e' },
-  { name:'紫队', body:'#7A3FC8', wing:'#181818' }
+var TEAMS = [   // 按真实 F1 车队涂装
+  { name:'你·法拉利', body:'#DC0000', wing:'#1a1a1a' },      // 法拉利：红+黑翼
+  { name:'红牛',      body:'#232B4E', wing:'#FFD34D' },      // 红牛：深藏青+黄翼
+  { name:'迈凯伦',    body:'#FF8000', wing:'#16324F' },      // 迈凯伦：木瓜橙+蓝黑翼
+  { name:'梅奔',      body:'#1f1f1f', wing:'#00A19B' },      // 梅赛德斯：黑+青翼
+  { name:'马丁',      body:'#00594F', wing:'#C8F542' },      // 阿斯顿马丁：英伦绿+荧光翼
+  { name:'威廉姆斯',  body:'#E8ECF2', wing:'#005AFF' },      // 威廉姆斯：白+蓝翼
+  { name:'Alpine',   body:'#2293D1', wing:'#FF6EB4' },      // Alpine：蓝+粉翼
+  { name:'索伯',      body:'#181818', wing:'#52E252' }       // 索伯：黑+荧光绿翼
 ];
 var cars = [];
 function mkCar(i, gx, gy) {
@@ -254,7 +259,7 @@ function mkCar(i, gx, gy) {
     team: i, x: gx, y: gy, angle: 0, speed: 0, latS: 0,
     lap: 0, lastSeg: SEGN - 2, lapT: 0, bestLap: 0,
     aiSkill: 0.97 + i * 0.035, finished: false, finishT: 0,
-    offT: 0, rejoinX: 0, rejoinY: 0, prevX: gx, prevY: gy, passSide: 0
+    offT: 0, rejoinX: 0, rejoinY: 0, prevX: gx, prevY: gy, passSide: 0, passOffset: 0
   };
 }
 var state = 'menu';
@@ -262,7 +267,7 @@ var raceT = 0, startLights = 0;
 
 function startRace() {
   cars = [];
-  var offs = [[-60,-28],[-115,28],[-170,-28],[-225,28],[-280,-28],[-335,28]];   // 发车格（相对起点线：沿道后退/横向交错）
+  var offs = [[-60,-28],[-115,28],[-170,-28],[-225,28],[-280,-28],[-335,28],[-390,-28],[-445,28]];   // 发车格 8 位（相对起点线：沿道后退/横向交错）
   var nx = -SEG0Y, ny = SEG0X;
   for (var i = 0; i < offs.length; i++) {
     var s = START_S + offs[i][0], l = offs[i][1];
@@ -555,11 +560,21 @@ function aiDrive(c, dt) {
     var ppx = -Math.sin(c.angle), ppy = Math.cos(c.angle);
     if (!startPhase && c.passSide === 0 && ahead.d < 220 && Math.abs(ahead.side) < 24 &&
         (c.slip || c.speed > ahead.car.speed + 4)) {
-      c.passSide = ahead.side >= 0 ? -1 : 1;      // 往对方反侧提前抽头（220px 就拉，先横移再贴近）
+      // 抽头方向：前方有弯就抢下一个弯的内线；直道上按车队奇偶分边（不再全员同侧）
+      if (apexI >= 0 && apexTurn > 0.2) {
+        var idr = insideDir(apexI);
+        c.passSide = (idr[0] * ppx + idr[1] * ppy) > 0 ? 1 : -1;
+      } else if (Math.abs(ahead.side) > 6) {
+        c.passSide = ahead.side > 0 ? -1 : 1;
+      } else {
+        c.passSide = (c.team % 2) ? 1 : -1;
+      }
     }
+    // 目标横移量渐进过渡——杜绝目标点瞬间横跳引发的"直道急刹车"
+    var wantOff = (c.passSide !== 0) ? c.passSide * 62 : 0;
+    c.passOffset += Math.max(-130 * dt, Math.min(130 * dt, wantOff - c.passOffset));
+    if (c.passOffset !== 0) { tp[0] += ppx * c.passOffset; tp[1] += ppy * c.passOffset; }
     if (c.passSide !== 0) {
-      tp[0] += ppx * c.passSide * 62;             // 拉开 62px：车宽+余量
-      tp[1] += ppy * c.passSide * 62;
       // 进中急弯先收回排队——但还并排时不许收（收线就是别车），保持侧向间隔过弯
       if (apexTurn > 0.45 && (Math.abs(ahead.side) < 18 || ahead.d > 90)) c.passSide = 0;
       else if (ahead.d > 230) c.passSide = 0;     // 超完/放弃了，回 racing line
@@ -604,7 +619,7 @@ function aiDrive(c, dt) {
       var lenOut = Math.sqrt((b2[0]-TRACK[i][0])*(b2[0]-TRACK[i][0]) + (b2[1]-TRACK[i][1])*(b2[1]-TRACK[i][1]));
       var theta = Math.acos(Math.max(-1, Math.min(1, 1 - turn)));
       var rCor = ((segLen + lenOut) / 2) / Math.max(0.2, theta) + ROAD_HALF * 0.7;
-      var vAllow = Math.sqrt(180 * rCor);   // 弯道横向加速度上限调高：AI 过弯不再怂
+      var vAllow = Math.sqrt(210 * rCor);   // 弯道横向加速度上限再调高：弯中更快
       var vHere = Math.sqrt(vAllow * vAllow + 2 * brakePow * acc);   // 刹车曲线
       if (vHere < want2) want2 = vHere;
     }
@@ -621,13 +636,13 @@ function aiDrive(c, dt) {
   // 完全拉到侧面才放开限速——让它超
   if (ahead && Math.abs(ahead.side) < 40) {
     if (c.passSide !== 0 && Math.abs(ahead.side) > 12) {
-      want2 = Math.min(want2, ahead.car.speed + 26);   // 抽头探出半个车身：允许快一截完成超越
+      want2 = Math.min(want2, ahead.car.speed + 40);   // 抽头探出半个车身：允许快一截完成超越
     } else if (ahead.d < 70) want2 = Math.min(want2, ahead.car.speed * 0.97);
     else want2 = Math.min(want2, ahead.car.speed + (ahead.d - 70) * 0.3);
   }
   // 并排进中急弯：抽头一方主动松油认栽，让对方先过——下次再来（不进弯硬挤）
   if (ahead && c.passSide !== 0 && apexTurn > 0.2 && ahead.d < 90 && Math.abs(ahead.side) >= 18) {
-    want2 = Math.min(want2, ahead.car.speed * 0.93);
+    want2 = Math.min(want2, ahead.car.speed * 0.97);
   }
   if (c.speed < want2) c.speed += 160 * D.acc * (c.slip ? 1.25 : 1) * dt;
   else c.speed -= brakePow * dt;
@@ -876,7 +891,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.12.5', CX, 242);
+  ctx.fillText('v0.13.0', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
@@ -935,10 +950,10 @@ function drawOver() {
   for (var i = 0; i < order.length; i++) {
     ctx.fillStyle = order[i].team === 0 ? '#ffe14d' : '#aab6c4';
     ctx.fillText('P' + (i + 1) + '  ' + TEAMS[order[i].team].name +
-      (order[i].finished ? '  ' + fmtT(order[i].finishT) : '  未完赛'), CX, 440 + i * 34);
+      (order[i].finished ? '  ' + fmtT(order[i].finishT) : '  未完赛'), CX, 415 + i * 29);
   }
   ctx.fillStyle = '#9fb0c2'; ctx.font = '16px sans-serif';
-  ctx.fillText('按 Enter 回主菜单', CX, 640);
+  ctx.fillText('按 Enter 回主菜单', CX, 660);
 }
 function draw() {
   BTNS = [];
