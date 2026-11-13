@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.14.0
+   极速弯心 APEX RACER · v0.15.0
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车 + 6 车攻防
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
@@ -46,9 +46,10 @@
    v0.13.2：修 AI 弯中太慢的真凶（保镖误伤赛车线），弯中 230→300+
    v0.13.3：尾流区横向加宽（±34→±55，抽头拉出去不脱 tow）/
           高速风阻流线（>240 才出现的很淡速度线）
-   v0.14.0：+2 赛道（🔱三角镖/🪃回旋镖，大厅 5 图）/ 尾流改渐变
-         （越近越强才真实）/ AI 速度回调（弯速模型 240→150，
-          你失误就挨罚、不失误能靠 tow 超）/ 风阻流线改小改淡
+   v0.14.0：+2 赛道（🔱三角镖/🪃回旋镖，大厅 5 图）/ 尾流渐变 /
+          AI 节奏再平衡 / 风阻流线改小改淡
+   v0.15.0：排位赛！正赛前先跑排位——幽灵模式每人 2 个飞驰圈，
+          取最快单圈定发车顺位（杆位在最前），正赛发车样式不变
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -283,7 +284,7 @@ function mkCar(i, gx, gy) {
     team: i, x: gx, y: gy, angle: 0, speed: 0, latS: 0,
     lap: 0, lastSeg: SEGN - 2, lapT: 0, bestLap: 0,
     aiSkill: 0.97 + i * 0.035, finished: false, finishT: 0,
-    offT: 0, rejoinX: 0, rejoinY: 0, prevX: gx, prevY: gy, passSide: 0, passOffset: 0
+    offT: 0, rejoinX: 0, rejoinY: 0, prevX: gx, prevY: gy, passSide: 0, passOffset: 0, relT: 0, qLaps: 0, qBest: 0
   };
 }
 var state = 'menu';
@@ -304,6 +305,46 @@ function startRace() {
   engineStart();
 }
 
+// ---------- 排位赛：幽灵模式，每人 2 个飞驰圈，最快单圈定发车顺位 ----------
+var qualEndT = 0, qualOrder = null;
+function player() { for (var i = 0; i < cars.length; i++) if (cars[i].team === 0) return cars[i]; return cars[0]; }
+function startQual() {
+  cars = [];
+  var nx = -SEG0Y, ny = SEG0X;
+  for (var i = 0; i < 8; i++) {
+    var s = START_S - 150 - i * 90;
+    var l = (i % 2 ? 20 : -20);
+    var c = mkCar(i, SEG0OX + SEG0X*s + nx*l, SEG0OY + SEG0Y*s + ny*l);
+    c.angle = Math.atan2(SEG0Y, SEG0X);
+    c.relT = i * 2.5;                            // 每 2.5 秒放一辆（你在第一个）
+    cars.push(c);
+  }
+  raceT = 0; qualEndT = 0; startLights = 0; sparks = [];
+  state = 'qual';
+  engineStart();
+}
+function finishQual() {
+  qualOrder = cars.slice().sort(function (a, b) { return (a.qBest || 999) - (b.qBest || 999); });
+  state = 'qualres';
+}
+function raceFromQual() {
+  var order = qualOrder || cars;
+  var offs = [[-60,-28],[-115,28],[-170,-28],[-225,28],[-280,-28],[-335,28],[-390,-28],[-445,28]];
+  var nx = -SEG0Y, ny = SEG0X;
+  cars = order;                                  // 排位成绩 = 发车顺位（杆位在最前）
+  for (var i = 0; i < cars.length; i++) {
+    var c = cars[i];
+    var s = START_S + offs[i][0], l = offs[i][1];
+    c.x = SEG0OX + SEG0X*s + nx*l; c.y = SEG0OY + SEG0Y*s + ny*l;
+    c.angle = Math.atan2(SEG0Y, SEG0X);
+    c.speed = 0; c.latS = 0; c.lap = 0; c.lapT = 0; c.bestLap = 0;
+    c.finished = false; c.finishT = 0; c.offT = 0; c.passSide = 0; c.passOffset = 0;
+    c.prevX = c.x; c.prevY = c.y;
+  }
+  raceT = 0; startLights = 2.2; sparks = [];
+  state = 'race';
+}
+
 // ---------- 按键 ----------
 var KEYS = {};
 addEventListener('keydown', function (e) {
@@ -316,9 +357,11 @@ addEventListener('keydown', function (e) {
     if (k === 'd' || k === 'arrowright') diffIdx = (diffIdx + 1) % 3;
     if (k === 'q') selectTrack(trackIdx + 2);
     if (k === 'e') selectTrack(trackIdx + 1);
-    if (k === 'enter') startRace();
+    if (k === 'enter') startQual();
   } else if (state === 'race') {
     if (k === 'v') camMode = 1 - camMode;            // 比赛中 V 切镜头
+  } else if (state === 'qualres') {
+    if (k === 'enter') raceFromQual();
   } else if (state === 'over') {
     if (k === 'enter') state = 'menu';
   }
@@ -400,7 +443,13 @@ function stepCar(c, dt, isPlayer) {
   // 圈数：真的压过起点线才算（沿主直道方向的投影跨过起点线），不再提前一车位弹提示
   var sPrev = (c.prevX - SEG0OX) * SEG0X + (c.prevY - SEG0OY) * SEG0Y;
   var sNow  = (c.x - SEG0OX) * SEG0X + (c.y - SEG0OY) * SEG0Y;
-  if (ns.i === 0 && sPrev < START_S && sNow >= START_S && c.speed > 40 && c.lapT > 8) {
+  if (state === 'qual' && ns.i === 0 && sPrev < START_S && sNow >= START_S && c.speed > 40 && c.lapT > 8) {
+    // 排位飞驰圈：记最快单圈
+    c.qLaps++;
+    if (!c.qBest || c.lapT < c.qBest) c.qBest = c.lapT;
+    c.lapT = 0;
+    if (c.team === 0) beep(880, 0.15, 0.06);
+  } else if (ns.i === 0 && sPrev < START_S && sNow >= START_S && c.speed > 40 && c.lapT > 8) {
     if (c.lap > 0) {
       if (!c.bestLap || c.lapT < c.bestLap) c.bestLap = c.lapT;
       if (c.team === 0) beep(880, 0.15, 0.06);
@@ -578,7 +627,7 @@ function aiDrive(c, dt) {
   }
 
   // 交通意识：咬尾跟住（控速不撞）；吸到尾流/速度占优时果断抽头，拉出去就不再收
-  var ahead = carAhead(c);
+  var ahead = state === 'race' ? carAhead(c) : null;   // 排位幽灵模式：无交通
   var startPhase = raceT < 6;                    // 起步 6 秒车阵没拉开：只许排队，不许抽头
   if (ahead) {
     var ppx = -Math.sin(c.angle), ppy = Math.cos(c.angle);
@@ -722,7 +771,7 @@ function drawSparks() {
 // ---------- 高速风阻流线（很淡，只在你高速时出现） ----------
 var winds = [];
 function stepWinds(dt) {
-  var me = cars[0];
+  var me = player();
   if (me && me.speed > 240 && Math.random() < (me.speed - 230) * 0.02) {
     var fx = Math.cos(me.angle), fy = Math.sin(me.angle);
     var aheadD = 80 + Math.random() * 220;
@@ -814,6 +863,7 @@ function fmtT(t) {
 
 // ---------- 主更新 ----------
 function update(dt) {
+  if (state === 'qual') { updateQual(dt); return; }
   if (state !== 'race') return;
   raceT += dt;
   if (startLights > 0) { startLights -= dt; return; }
@@ -829,10 +879,30 @@ function update(dt) {
   carCollide(dt);
   stepSparks(dt);
   stepWinds(dt);
-  camFollow(cars[0], dt);
-  engineTick(cars[0] ? cars[0].speed : 0);
+  camFollow(player(), dt);
+  engineTick(player() ? player().speed : 0);
 
-  if (cars[0] && cars[0].finished) { state = 'over'; engineStop(); beep(660, 0.2, 0.07); }
+  if (player() && player().finished) { state = 'over'; engineStop(); beep(660, 0.2, 0.07); }
+}
+
+function updateQual(dt) {
+  raceT += dt;
+  for (var i = 0; i < cars.length; i++) {
+    var c = cars[i];
+    if (raceT < c.relT) continue;                              // 还没轮到出场
+    if (c.qLaps >= 2) { c.speed *= (1 - dt * 1.5); continue; } // 跑完收工
+    c.slipFrom = null; c.slipStr = 0; c.slip = false;          // 排位没有尾流
+    if (c.team === 0) stepCar(c, dt, true);
+    else { aiDrive(c, dt); stepCar(c, dt, false); }
+  }
+  // 幽灵模式：不碰撞
+  stepSparks(dt); stepWinds(dt);
+  camFollow(player(), dt);
+  engineTick(player() ? player().speed : 0);
+  if (player() && player().qLaps >= 2) {
+    qualEndT += dt;
+    if (qualEndT > 4) finishQual();                            // 你跑完 4 秒后出成绩
+  }
 }
 
 // ---------- 绘制 ----------
@@ -915,9 +985,22 @@ function drawHUD() {
     ctx.textAlign = 'left';
     BTNS.push({ x: bx2, y: by2, w: 112, h: 34, fn: function () { camMode = 1 - camMode; } });
   }
-  var me = cars[0];
+  var me = player();
   ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 18px sans-serif';
+  if (state === 'qual') {
+    var rank = 1;
+    for (var qi = 0; qi < cars.length; qi++) if (cars[qi].qBest && (!me.qBest || cars[qi].qBest < me.qBest)) rank++;
+    ctx.fillText('排位赛 · 飞驰圈 ' + Math.min(me.qLaps + 1, 2) + '/2', 18, 26);
+    ctx.fillStyle = '#c8d3de'; ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('本圈 ' + fmtT(me.lapT), 230, 26);
+    ctx.fillStyle = '#8fd0a8';
+    ctx.fillText('最快 ' + (me.qBest ? fmtT(me.qBest) : '--:--'), 400, 26);
+    ctx.fillStyle = rank === 1 ? '#ffe14d' : '#c8d3de';
+    ctx.fillText('实时 P' + rank, 580, 26);
+    ctx.textAlign = 'left';
+    return;
+  }
   ctx.fillText('第 ' + Math.min(me.lap, TOTAL_LAPS) + ' / ' + TOTAL_LAPS + ' 圈', 18, 26);
   ctx.fillStyle = '#c8d3de'; ctx.font = 'bold 16px sans-serif';
   ctx.fillText('车速 ' + Math.round(me.speed) + ' km/h', 170, 26);
@@ -951,7 +1034,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.14.0', CX, 242);
+  ctx.fillText('v0.15.0', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
@@ -985,14 +1068,14 @@ function drawMenu() {
   ctx.fillStyle = '#D92B2B';
   btnPath(CX - 170, 535, 340, 62, 14); ctx.fill();
   ctx.fillStyle = '#ffffff'; ctx.font = 'bold 24px sans-serif';
-  ctx.fillText('🏁 发车（或按 Enter）', CX, 567);
-  BTNS.push({ x: CX - 170, y: 535, w: 340, h: 62, fn: startRace });
+  ctx.fillText('🏁 排位赛（或按 Enter）', CX, 567);
+  BTNS.push({ x: CX - 170, y: 535, w: 340, h: 62, fn: startQual });
   ctx.fillStyle = '#8fa0b3'; ctx.font = '16px sans-serif';
   ctx.fillText('↑/W 油门 · ↓/S 刹车 · ←→/AD 转向', CX, 655);
   ctx.fillText('出赛道会滑进草地，慢下来后自动复位 · 跟住前车尾部吃尾流可提速超车 · V 切换镜头', CX, 685);
 }
 function drawOver() {
-  var me = cars[0];
+  var me = player();
   ctx.fillStyle = 'rgba(10,14,20,0.82)'; ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
   var pos = positionOf(me);
@@ -1015,6 +1098,24 @@ function drawOver() {
   ctx.fillStyle = '#9fb0c2'; ctx.font = '16px sans-serif';
   ctx.fillText('按 Enter 回主菜单', CX, 660);
 }
+function drawQualRes() {
+  ctx.fillStyle = 'rgba(10,14,20,0.88)'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffe14d'; ctx.font = 'bold 40px sans-serif';
+  ctx.fillText('排位赛成绩 · 发车顺位', CX, 130);
+  ctx.font = '20px sans-serif';
+  for (var i = 0; i < qualOrder.length; i++) {
+    var c = qualOrder[i];
+    ctx.fillStyle = c.team === 0 ? '#ffe14d' : '#aab6c4';
+    ctx.fillText('P' + (i + 1) + '  ' + TEAMS[c.team].name + '  ' + (c.qBest ? fmtT(c.qBest) : '无成绩'), CX, 210 + i * 38);
+  }
+  ctx.fillStyle = '#D92B2B';
+  btnPath(CX - 170, 570, 340, 62, 14); ctx.fill();
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 24px sans-serif';
+  ctx.fillText('🏁 正赛发车（Enter）', CX, 602);
+  BTNS.push({ x: CX - 170, y: 570, w: 340, h: 62, fn: raceFromQual });
+}
+
 function draw() {
   BTNS = [];
   ctx.clearRect(0, 0, W, H);
@@ -1029,8 +1130,8 @@ function draw() {
   }
   drawTrack();
   drawWinds();
-  if (cars[0] && cars[0].slipFrom) {                  // 尾流带：前车尾部拖着一条向后流动的低压气带
-    var wo = cars[0].slipFrom;
+  if (player() && player().slipFrom) {               // 尾流带：前车尾部拖着一条向后流动的低压气带
+    var wo = player().slipFrom;
     ctx.save();
     ctx.translate(wo.x, wo.y);
     ctx.rotate(wo.angle);
@@ -1055,9 +1156,10 @@ function draw() {
   for (var i = cars.length - 1; i >= 0; i--) drawCar(cars[i]);
   drawSparks();
   ctx.restore();
-  drawHUD();
-  drawLights();
+  if (state === 'race' || state === 'qual') drawHUD();
+  if (state === 'race') drawLights();
   if (state === 'over') drawOver();
+  if (state === 'qualres') drawQualRes();
 }
 
 // ---------- 主循环 ----------
