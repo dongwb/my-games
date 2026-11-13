@@ -19,7 +19,7 @@
 </div>
 <script>
 /* ============================================================
-   极速弯心 APEX RACER · v0.13.0
+   极速弯心 APEX RACER · v0.13.1
    俯视 F1：三条特色赛道（放大版）+ 向量物理 + 尾流超车 + 6 车攻防
    v0.10.0：赛道库（眼镜蛇/漩涡/战斧）/ AI 赛车线 / 路肩贴弯内缘 /
           尾流 ×1.1 / 修 V 键
@@ -40,9 +40,10 @@
           尾速差收窄（中等 334~342 / 困难 342~350），能玩不等于让着你
    v0.12.5：再平衡——中等比玩家能打 5%（加速 168/尾速 342~350）、
           困难强 10~15%（加速 192/尾速 350~358），弯道快保留
-   v0.13.0：8 车 8 支真实 F1 涂装（法拉利/红牛/迈凯伦/梅奔/马丁/
-          威廉姆斯/Alpine/索伯）/ 抽头方向选下一个弯内线+平滑过渡
-         （治直道急刹）/ 超越期超速+40 / 弯道横向加速度 180→210
+   v0.13.0：8 车 8 支真实 F1 涂装 / 抽头选弯内线+平滑过渡 /
+          超越期超速+40 / 弯速 180→210
+   v0.13.1：梅奔索伯配色对调 / v0.14.0 真实抓地实验回退
+         （7g 物理下 AI 车阵玩不转，真实物理需重写 AI 驾驶模型）
    ============================================================ */
 
 var cv = document.getElementById('cv'), ctx = cv.getContext('2d');
@@ -247,11 +248,11 @@ var TEAMS = [   // 按真实 F1 车队涂装
   { name:'你·法拉利', body:'#DC0000', wing:'#1a1a1a' },      // 法拉利：红+黑翼
   { name:'红牛',      body:'#232B4E', wing:'#FFD34D' },      // 红牛：深藏青+黄翼
   { name:'迈凯伦',    body:'#FF8000', wing:'#16324F' },      // 迈凯伦：木瓜橙+蓝黑翼
-  { name:'梅奔',      body:'#1f1f1f', wing:'#00A19B' },      // 梅赛德斯：黑+青翼
+  { name:'梅奔',      body:'#181818', wing:'#52E252' },      // 梅赛德斯（配色按制作人要求与索伯对调）
   { name:'马丁',      body:'#00594F', wing:'#C8F542' },      // 阿斯顿马丁：英伦绿+荧光翼
   { name:'威廉姆斯',  body:'#E8ECF2', wing:'#005AFF' },      // 威廉姆斯：白+蓝翼
   { name:'Alpine',   body:'#2293D1', wing:'#FF6EB4' },      // Alpine：蓝+粉翼
-  { name:'索伯',      body:'#181818', wing:'#52E252' }       // 索伯：黑+荧光绿翼
+  { name:'索伯',      body:'#1f1f1f', wing:'#00A19B' }       // 索伯（配色按制作人要求与梅奔对调）
 ];
 var cars = [];
 function mkCar(i, gx, gy) {
@@ -619,7 +620,7 @@ function aiDrive(c, dt) {
       var lenOut = Math.sqrt((b2[0]-TRACK[i][0])*(b2[0]-TRACK[i][0]) + (b2[1]-TRACK[i][1])*(b2[1]-TRACK[i][1]));
       var theta = Math.acos(Math.max(-1, Math.min(1, 1 - turn)));
       var rCor = ((segLen + lenOut) / 2) / Math.max(0.2, theta) + ROAD_HALF * 0.7;
-      var vAllow = Math.sqrt(210 * rCor);   // 弯道横向加速度上限再调高：弯中更快
+      var vAllow = Math.sqrt(240 * rCor);   // 弯中再提速
       var vHere = Math.sqrt(vAllow * vAllow + 2 * brakePow * acc);   // 刹车曲线
       if (vHere < want2) want2 = vHere;
     }
@@ -891,7 +892,7 @@ function drawMenu() {
   ctx.fillStyle = '#ff6b5e'; ctx.font = 'bold 24px sans-serif';
   ctx.fillText('APEX RACER · 俯视 F1', CX, 212);
   ctx.fillStyle = '#6b7a8d'; ctx.font = '16px sans-serif';
-  ctx.fillText('v0.13.0', CX, 242);
+  ctx.fillText('v0.13.1', CX, 242);
   // 赛道按钮（鼠标点击选择，Q/E 也行）
   ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = '#8fa0b3';
   ctx.fillText('赛道（点击选择，Q/E 切换）', CX, 300);
